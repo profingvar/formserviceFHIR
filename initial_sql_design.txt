@@ -1,0 +1,214 @@
+-- ============================================================
+-- formserviceFHIR — Reference SQL Schema
+-- FHIR 5 aligned identifiers. GUIDs for all external references.
+-- Internal PK is integer (serial). This is reference only (Rule 5).
+-- ============================================================
+
+-- ENUM types
+CREATE TYPE user_type_enum AS ENUM ('patient', 'professional');
+CREATE TYPE professional_role_enum AS ENUM ('doctor', 'nurse', 'other');
+CREATE TYPE group_type_enum AS ENUM ('planning', 'request', 'provider', 'analysis');
+CREATE TYPE membership_status_enum AS ENUM ('pending', 'approved', 'rejected');
+CREATE TYPE access_request_status_enum AS ENUM ('pending', 'endorsed', 'approved', 'rejected');
+CREATE TYPE proposal_status_enum AS ENUM ('pending', 'approved', 'rejected');
+
+-- ============================================================
+-- users
+-- FHIR: base identity, not directly a FHIR resource
+-- ============================================================
+CREATE TABLE users (
+    id              SERIAL PRIMARY KEY,
+    guid            UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    email           VARCHAR(255) NOT NULL UNIQUE,
+    password_hash   VARCHAR(255) NOT NULL,
+    user_type       user_type_enum NOT NULL,
+    is_su_admin     BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- patients
+-- FHIR resource type: Patient
+-- ============================================================
+CREATE TABLE patients (
+    id                  SERIAL PRIMARY KEY,
+    guid                UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    personnummer        VARCHAR(12) NOT NULL UNIQUE,
+    organisation_guid   UUID REFERENCES organisations(guid),
+    in_registry         BOOLEAN NOT NULL DEFAULT FALSE,
+    registries          TEXT[] DEFAULT '{}',
+    fhir_resource_type  VARCHAR(50) NOT NULL DEFAULT 'Patient',
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- professionals
+-- FHIR resource type: Practitioner
+-- ============================================================
+CREATE TABLE professionals (
+    id                  SERIAL PRIMARY KEY,
+    guid                UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    professional_role   professional_role_enum NOT NULL DEFAULT 'other',
+    first_name          VARCHAR(255),
+    last_name           VARCHAR(255),
+    fhir_resource_type  VARCHAR(50) NOT NULL DEFAULT 'Practitioner',
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- organisations
+-- FHIR resource type: Organization
+-- Single source of truth for all services.
+-- ============================================================
+CREATE TABLE organisations (
+    id                  SERIAL PRIMARY KEY,
+    guid                UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    name                VARCHAR(255) NOT NULL UNIQUE,
+    fhir_resource_type  VARCHAR(50) NOT NULL DEFAULT 'Organization',
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- user_organisations (many-to-many junction)
+-- A professional can belong to multiple organisations.
+-- ============================================================
+CREATE TABLE user_organisations (
+    id                  SERIAL PRIMARY KEY,
+    user_guid           UUID NOT NULL REFERENCES users(guid),
+    organisation_guid   UUID NOT NULL REFERENCES organisations(guid),
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(user_guid, organisation_guid)
+);
+
+-- ============================================================
+-- groups
+-- FHIR resource type: Group
+-- group_type maps to phase: planning, request, provider, analysis
+-- ============================================================
+CREATE TABLE groups (
+    id                  SERIAL PRIMARY KEY,
+    guid                UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    name                VARCHAR(255) NOT NULL,
+    group_type          group_type_enum NOT NULL,
+    fhir_resource_type  VARCHAR(50) NOT NULL DEFAULT 'Group',
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- memberships
+-- Links user to group with status and admin flag.
+-- decided_by_guid nullable for cascade safety on user delete.
+-- ============================================================
+CREATE TABLE memberships (
+    id                  SERIAL PRIMARY KEY,
+    guid                UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    user_guid           UUID NOT NULL REFERENCES users(guid),
+    group_guid          UUID NOT NULL REFERENCES groups(guid),
+    status              membership_status_enum NOT NULL DEFAULT 'pending',
+    is_admin            BOOLEAN NOT NULL DEFAULT FALSE,
+    decided_by_guid     UUID REFERENCES users(guid) ON DELETE SET NULL,
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- group_proposals
+-- Professional suggests a new group; SU decides.
+-- ============================================================
+CREATE TABLE group_proposals (
+    id                  SERIAL PRIMARY KEY,
+    guid                UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    proposed_name       VARCHAR(255) NOT NULL,
+    group_type          group_type_enum NOT NULL,
+    requested_by_guid   UUID NOT NULL REFERENCES users(guid),
+    status              proposal_status_enum NOT NULL DEFAULT 'pending',
+    decided_by_guid     UUID REFERENCES users(guid) ON DELETE SET NULL,
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- leader_requests
+-- Professional requests group admin role; SU decides.
+-- ============================================================
+CREATE TABLE leader_requests (
+    id                  SERIAL PRIMARY KEY,
+    guid                UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    user_guid           UUID NOT NULL REFERENCES users(guid),
+    group_guid          UUID NOT NULL REFERENCES groups(guid),
+    status              proposal_status_enum NOT NULL DEFAULT 'pending',
+    decided_by_guid     UUID REFERENCES users(guid) ON DELETE SET NULL,
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- access_requests
+-- Public onboarding: unauthenticated professional applies.
+-- Lifecycle: pending → endorsed → approved | rejected
+-- ============================================================
+CREATE TABLE access_requests (
+    id                  SERIAL PRIMARY KEY,
+    guid                UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    email               VARCHAR(255) NOT NULL,
+    password_hash       VARCHAR(255) NOT NULL,
+    first_name          VARCHAR(255) NOT NULL,
+    last_name           VARCHAR(255) NOT NULL,
+    professional_role   professional_role_enum NOT NULL DEFAULT 'other',
+    organisation_guid   UUID NOT NULL REFERENCES organisations(guid),
+    requested_phases    group_type_enum[] NOT NULL DEFAULT '{}',
+    chosen_leader_guid  UUID NOT NULL REFERENCES users(guid),
+    status              access_request_status_enum NOT NULL DEFAULT 'pending',
+    decided_by_guid     UUID REFERENCES users(guid) ON DELETE SET NULL,
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- invites
+-- Time-limited token for group join. Created by group admin or SU.
+-- ============================================================
+CREATE TABLE invites (
+    id                  SERIAL PRIMARY KEY,
+    guid                UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    group_guid          UUID NOT NULL REFERENCES groups(guid) ON DELETE CASCADE,
+    token               VARCHAR(255) NOT NULL UNIQUE,
+    expires_at          TIMESTAMP NOT NULL,
+    created_by_guid     UUID NOT NULL REFERENCES users(guid),
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- revoked_tokens
+-- JWT revocation list. Pruned after token expiry.
+-- ============================================================
+CREATE TABLE revoked_tokens (
+    id                  SERIAL PRIMARY KEY,
+    token_guid          UUID NOT NULL UNIQUE,
+    expires_at          TIMESTAMP NOT NULL,
+    created_at          TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- Indexes for common queries
+-- ============================================================
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_guid ON users(guid);
+CREATE INDEX idx_patients_personnummer ON patients(personnummer);
+CREATE INDEX idx_patients_user_id ON patients(user_id);
+CREATE INDEX idx_professionals_user_id ON professionals(user_id);
+CREATE INDEX idx_user_organisations_user ON user_organisations(user_guid);
+CREATE INDEX idx_user_organisations_org ON user_organisations(organisation_guid);
+CREATE INDEX idx_memberships_user ON memberships(user_guid);
+CREATE INDEX idx_memberships_group ON memberships(group_guid);
+CREATE INDEX idx_memberships_status ON memberships(status);
+CREATE INDEX idx_group_proposals_status ON group_proposals(status);
+CREATE INDEX idx_leader_requests_status ON leader_requests(status);
+CREATE INDEX idx_access_requests_status ON access_requests(status);
+CREATE INDEX idx_invites_token ON invites(token);
+CREATE INDEX idx_invites_expires ON invites(expires_at);
+CREATE INDEX idx_revoked_tokens_guid ON revoked_tokens(token_guid);
+CREATE INDEX idx_revoked_tokens_expires ON revoked_tokens(expires_at);

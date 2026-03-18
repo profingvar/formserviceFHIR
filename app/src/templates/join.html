@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Join by Invite — formserviceFHIR{% endblock %}
+{% block content %}
+<div style="max-width: 450px; margin: 2rem auto;">
+    <div class="card">
+        <h2>Join Group by Invite</h2>
+        <p class="text-muted mb-2">Enter the invite token you received to request group membership.</p>
+        <form method="post" action="/join">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="token">Invite Token</label>
+                <input type="text" id="token" name="token" required placeholder="Paste invite token here">
+            </div>
+            <button type="submit" class="btn btn-primary" style="width:100%;">Join</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

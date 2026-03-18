@@ -1,0 +1,24 @@
+# Core
+Flask>=3.1.0
+SQLAlchemy>=2.0.40
+psycopg2-binary>=2.9.10
+python-dotenv>=1.1.0
+gunicorn>=23.0.0
+
+# Auth
+PyJWT>=2.10.0
+bcrypt>=4.3.0
+
+# Middleware
+Flask-WTF>=1.2.2
+Flask-Cors>=5.0.0
+
+# FHIR
+fhir.resources>=8.0.0
+
+# Testing
+pytest>=8.3.0
+# pytest-flask removed: interferes with session teardown in SQLite StaticPool tests
+
+# Documentation
+mkdocs-material>=9.6.0

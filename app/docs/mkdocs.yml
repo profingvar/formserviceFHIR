@@ -1,0 +1,39 @@
+site_name: formserviceFHIR SSO Documentation
+site_description: Central SSO/OAuth service for PDHC
+site_url: https://sso.pdhc.se/docs/
+
+theme:
+  name: material
+  palette:
+    primary: blue
+    accent: indigo
+  features:
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - tables
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - API Reference: api-reference.md
+  - Integration Guide: integration-guide.md
+  - Admin Manual: admin-manual.md
+  - Deployment Guide: deployment-guide.md
+  - User Guide: user-guide.md

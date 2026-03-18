@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}SU Admin — formserviceFHIR{% endblock %}
+{% block container_class %}container-wide{% endblock %}
+{% block content %}
+<h2 class="mb-2">SU Admin Panel</h2>
+
+<!-- Users -->
+<div class="card">
+    <h3>Users ({{ users | length }})</h3>
+    <div class="mb-1">
+        <a href="/api/admin/export-users" class="btn btn-sm btn-secondary" target="_blank">Export CSV</a>
+        <form method="post" action="/admin/import-users" enctype="multipart/form-data" style="display:inline-block;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="file" name="file" accept=".csv" required style="font-size:0.8rem;">
+            <button type="submit" class="btn btn-sm btn-secondary">Import CSV</button>
+        </form>
+    </div>
+    <div style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr><th>Email</th><th>Type</th><th>Name</th><th>Role</th><th>SU</th><th>Created</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+        {% for u in users %}
+            <tr>
+                <td>{{ u.email }}</td>
+                <td><span class="badge badge-{{ u.user_type }}">{{ u.user_type }}</span></td>
+                <td>{{ u.first_name or '' }} {{ u.last_name or '' }}</td>
+                <td>{{ u.professional_role or '-' }}</td>
+                <td>{% if u.is_su_admin %}<span class="badge badge-su">SU</span>{% endif %}</td>
+                <td>{{ u.created_at[:10] if u.created_at else '-' }}</td>
+                <td>
+                    {% if not u.is_su_admin and u.user_type == 'professional' %}
+                    <form method="post" action="/admin/promote-su" style="display:inline;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
+                        <input type="password" name="password" placeholder="Your password" style="width:120px;padding:2px 4px;font-size:0.8rem;" required>
+                        <button type="submit" class="btn btn-sm btn-primary">Promote SU</button>
+                    </form>
+                    {% endif %}
+                    {% if u.user_guid != current_user.guid %}
+                    <form method="post" action="/admin/delete-user" style="display:inline;"
+                          onsubmit="return confirm('Delete user {{ u.email }}?');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
+                        <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+
+<!-- Organisations -->
+<div class="card">
+    <h3>Organisations</h3>
+    <table>
+        <thead><tr><th>Name</th><th>GUID</th></tr></thead>
+        <tbody>
+        {% for o in organisations %}
+            <tr><td>{{ o.name }}</td><td style="font-size:0.8rem;">{{ o.organisation_guid }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    <form method="post" action="/admin/create-organisation" class="mt-2" style="display:flex;gap:0.5rem;align-items:end;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="form-group" style="flex:1;margin-bottom:0;">
+            <label for="org_name">New Organisation</label>
+            <input type="text" id="org_name" name="name" required placeholder="Organisation name">
+        </div>
+        <button type="submit" class="btn btn-primary">Create</button>
+    </form>
+</div>
+
+<div class="grid-2">
+    <!-- Access Requests -->
+    <div class="card">
+        <h3>Access Requests ({{ access_requests | length }})</h3>
+        {% if access_requests %}
+        <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for ar in access_requests %}
+                <tr>
+                    <td>{{ ar.first_name }} {{ ar.last_name }}</td>
+                    <td>{{ ar.email }}</td>
+                    <td>{{ ar.professional_role }}</td>
+                    <td><span class="badge badge-{{ ar.status }}">{{ ar.status }}</span></td>
+                    <td>
+                        {% if ar.status in ('pending', 'endorsed') %}
+                        <form method="post" action="/admin/decide-access-request" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="access_request_guid" value="{{ ar.access_request_guid }}">
+                            {% if ar.status == 'pending' %}
+                                <button name="decision" value="endorsed" class="btn btn-sm btn-secondary">Endorse</button>
+                            {% endif %}
+                            <button name="decision" value="approved" class="btn btn-sm btn-success">Approve</button>
+                            <button name="decision" value="rejected" class="btn btn-sm btn-danger">Reject</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No pending access requests.</p>
+        {% endif %}
+    </div>
+
+    <!-- Group Proposals -->
+    <div class="card">
+        <h3>Group Proposals ({{ group_proposals | length }})</h3>
+        {% if group_proposals %}
+        <table>
+            <thead><tr><th>Name</th><th>Type</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for p in group_proposals %}
+                <tr>
+                    <td>{{ p.proposed_name }}</td>
+                    <td>{{ p.group_type }}</td>
+                    <td>
+                        <form method="post" action="/admin/decide-group-proposal" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="proposal_guid" value="{{ p.proposal_guid }}">
+                            <button name="decision" value="approved" class="btn btn-sm btn-success">Approve</button>
+                            <button name="decision" value="rejected" class="btn btn-sm btn-danger">Reject</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No pending proposals.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="grid-2">
+    <!-- Leader Requests -->
+    <div class="card">
+        <h3>Leader Requests ({{ leader_requests | length }})</h3>
+        {% if leader_requests %}
+        <table>
+            <thead><tr><th>User</th><th>Group</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for lr in leader_requests %}
+                <tr>
+                    <td>{{ lr.user_guid[:8] }}...</td>
+                    <td>{{ lr.group_guid[:8] }}...</td>
+                    <td>
+                        <form method="post" action="/admin/decide-leader-request" style="display:inline;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="leader_request_guid" value="{{ lr.leader_request_guid }}">
+                            <button name="decision" value="approved" class="btn btn-sm btn-success">Approve</button>
+                            <button name="decision" value="rejected" class="btn btn-sm btn-danger">Reject</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No pending leader requests.</p>
+        {% endif %}
+    </div>
+
+    <!-- Groups (with delete) -->
+    <div class="card">
+        <h3>All Groups</h3>
+        {% if groups %}
+        <table>
+            <thead><tr><th>Name</th><th>Type</th><th>Actions</th></tr></thead>
+            <tbody>
+            {% for g in groups %}
+                <tr>
+                    <td>{{ g.name }}</td>
+                    <td>{{ g.group_type }}</td>
+                    <td>
+                        <form method="post" action="/admin/delete-group" style="display:inline;"
+                              onsubmit="return confirm('Delete group {{ g.name }}?');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="group_guid" value="{{ g.guid }}">
+                            <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No groups.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Oath Overview -->
+<div class="card">
+    <h3>Oath Overview (Service Registry)</h3>
+    {% if oath_overview %}
+    <div style="overflow-x:auto;">
+    <table>
+        <thead><tr>{% for key in oath_overview[0].keys() %}<th>{{ key }}</th>{% endfor %}</tr></thead>
+        <tbody>
+        {% for row in oath_overview %}
+            <tr>{% for val in row.values() %}<td>{{ val }}</td>{% endfor %}</tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="text-muted">No services registered.</p>
+    {% endif %}
+</div>
+{% endblock %}

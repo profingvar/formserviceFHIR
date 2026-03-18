@@ -1,0 +1,759 @@
+# API Reference
+
+All endpoints are grouped by blueprint. Base URL: `https://sso.pdhc.se` (production) or `http://localhost:9000` (development).
+
+## Authentication Headers
+
+| Header | Usage |
+|--------|-------|
+| `Authorization: Bearer <JWT>` | Required for all authenticated endpoints |
+| `X-SSO-Client-Id` | Service-to-service auth (with `/me/service`) |
+| `X-SSO-Client-Secret` | Service-to-service auth (with `/me/service`) |
+| `Content-Type: application/json` | Required for all POST/PUT with JSON body |
+
+---
+
+## Health
+
+### `GET /api/health`
+
+**Auth:** None
+
+Returns service status and database connectivity.
+
+**Response** `200 OK`:
+```json
+{
+  "status": "healthy",
+  "database": "connected",
+  "version": "1.0.0"
+}
+```
+
+---
+
+## FHIR
+
+### `GET /fhir/metadata`
+
+**Auth:** None
+**Content-Type:** `application/fhir+json`
+
+Returns the FHIR R5 CapabilityStatement describing all supported resources and interactions.
+
+**Response** `200 OK`:
+```json
+{
+  "resourceType": "CapabilityStatement",
+  "fhirVersion": "5.0.0",
+  "status": "active",
+  "kind": "instance",
+  "rest": [
+    {
+      "mode": "server",
+      "resource": [
+        {"type": "Patient", "interaction": [{"code": "read"}, {"code": "create"}]},
+        {"type": "Practitioner", "interaction": [{"code": "read"}, {"code": "create"}]},
+        {"type": "Organization", "interaction": [{"code": "read"}, {"code": "create"}, {"code": "search-type"}]},
+        {"type": "Group", "interaction": [{"code": "read"}, {"code": "create"}, {"code": "search-type"}]}
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## Auth (`/api/auth`)
+
+### `POST /api/auth/login`
+
+**Auth:** None
+**Rate Limit:** 20 req/min per IP
+
+Authenticate with email and password. Returns JWT token. Supports SSO handshake via `next` and `state` parameters.
+
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "password": "secretpass",
+  "next": "https://app.pdhc.se/callback",
+  "state": "random-csrf-state"
+}
+```
+
+**Response** `200 OK` (direct login):
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIs...",
+  "user_guid": "a1b2c3d4-e5f6-..."
+}
+```
+
+**Response** `302 Redirect` (SSO handshake):
+Redirects to `{next}?token={JWT}&state={state}`
+
+**Errors:**
+
+| Code | Error | Description |
+|------|-------|-------------|
+| 400 | `invalid_request` | Missing email or password |
+| 400 | `invalid_redirect` | `next` URL not in allowlist |
+| 401 | `authentication_failed` | Wrong email or password |
+
+---
+
+### `GET /api/auth/me`
+
+**Auth:** Bearer token
+
+Returns the access blob for the authenticated user.
+
+**Response** `200 OK` (professional):
+```json
+{
+  "user_guid": "...",
+  "email": "doctor@hospital.se",
+  "user_type": "professional",
+  "is_su_admin": false,
+  "professional_guid": "...",
+  "professional_role": "doctor",
+  "fhir_resource_type": "Practitioner",
+  "organization_ids": ["org-guid-1"],
+  "groups": [
+    {
+      "group_guid": "...",
+      "group_name": "Oncology Planning",
+      "group_type": "planning",
+      "status": "approved",
+      "is_admin": false
+    }
+  ],
+  "effective_phases": ["planning"]
+}
+```
+
+**Response** `200 OK` (patient):
+```json
+{
+  "user_guid": "...",
+  "email": "patient@example.com",
+  "user_type": "patient",
+  "is_su_admin": false,
+  "patient_guid": "...",
+  "organisation_guid": "...",
+  "in_registry": true,
+  "registries": ["INCA"],
+  "fhir_resource_type": "Patient"
+}
+```
+
+**Errors:** `401` — missing/invalid/expired/revoked token
+
+---
+
+### `GET /api/auth/me/service`
+
+**Auth:** Bearer token + `X-SSO-Client-Id` + `X-SSO-Client-Secret`
+
+Same as `/me` but requires service-to-service credentials. Used by downstream services to validate tokens on behalf of users.
+
+**Errors:**
+
+| Code | Error | Description |
+|------|-------|-------------|
+| 401 | Unauthorized | Missing or invalid Bearer token |
+| 403 | `invalid_service_credentials` | Missing or wrong client ID/secret |
+
+---
+
+### `POST /api/auth/logout`
+
+**Auth:** Bearer token
+
+Revokes the current JWT by adding its `jti` to the revoked tokens table.
+
+**Response** `200 OK`:
+```json
+{
+  "message": "Logged out successfully"
+}
+```
+
+---
+
+### `POST /api/auth/change-password`
+
+**Auth:** Bearer token
+
+Change the authenticated user's password.
+
+**Request:**
+```json
+{
+  "current_password": "oldpass123",
+  "new_password": "newpass456"
+}
+```
+
+**Response** `200 OK`:
+```json
+{
+  "message": "Password changed successfully"
+}
+```
+
+**Errors:**
+
+| Code | Error | Description |
+|------|-------|-------------|
+| 400 | `invalid_request` | Missing fields or new password < 8 chars |
+| 401 | `authentication_failed` | Current password incorrect |
+
+---
+
+## Patient (`/api/patient`)
+
+### `POST /api/patient/register`
+
+**Auth:** None
+**Rate Limit:** 10 req/min per IP
+**FHIR:** Patient resource shape in response
+
+Self-registration for patients.
+
+**Request:**
+```json
+{
+  "email": "patient@example.com",
+  "password": "securepass",
+  "personnummer": "199001011234",
+  "organisation_guid": "org-guid-here"
+}
+```
+
+**Response** `201 Created`:
+```json
+{
+  "resourceType": "Patient",
+  "user_guid": "...",
+  "patient_guid": "...",
+  "email": "patient@example.com",
+  "personnummer": "199001011234",
+  "organisation_guid": "...",
+  "in_registry": false,
+  "registries": []
+}
+```
+
+**Errors:**
+
+| Code | Error | Description |
+|------|-------|-------------|
+| 400 | `validation_error` | Missing/invalid fields |
+| 404 | `not_found` | Organisation not found |
+| 409 | `conflict` | Email or personnummer already registered |
+
+---
+
+### `GET /api/patient/registry-status`
+
+**Auth:** Bearer token (patient only)
+
+Returns the patient's registry enrolment status. Only own data is accessible.
+
+**Response** `200 OK`:
+```json
+{
+  "resourceType": "Patient",
+  "patient_guid": "...",
+  "user_guid": "...",
+  "personnummer": "199001011234",
+  "organisation_guid": "...",
+  "in_registry": true,
+  "registries": ["INCA"]
+}
+```
+
+---
+
+## Groups (`/api/groups`)
+
+### `GET /api/groups`
+
+**Auth:** Bearer token (professional only)
+**FHIR:** Group resource shape
+
+List the authenticated professional's approved group memberships.
+
+**Response** `200 OK`:
+```json
+[
+  {
+    "resourceType": "Group",
+    "group_guid": "...",
+    "name": "Oncology Planning",
+    "group_type": "planning",
+    "is_admin": false,
+    "membership_status": "approved"
+  }
+]
+```
+
+---
+
+### `POST /api/groups/request-membership`
+
+**Auth:** Bearer token (professional only)
+
+Request to join a group. Creates a pending membership.
+
+**Request:**
+```json
+{
+  "group_guid": "target-group-guid"
+}
+```
+
+**Response** `201 Created`:
+```json
+{
+  "membership_guid": "...",
+  "group_guid": "...",
+  "status": "pending"
+}
+```
+
+**Errors:** `404` group not found, `409` membership already exists
+
+---
+
+### `POST /api/groups/request-admin`
+
+**Auth:** Bearer token (professional only)
+
+Request group admin (leader) role. Creates a leader request for SU review.
+
+**Request:**
+```json
+{
+  "group_guid": "target-group-guid"
+}
+```
+
+**Response** `201 Created`:
+```json
+{
+  "leader_request_guid": "...",
+  "group_guid": "...",
+  "status": "pending"
+}
+```
+
+---
+
+### `GET /api/groups/admin/pending`
+
+**Auth:** Bearer token (group admin or SU)
+
+List pending membership requests for groups the caller administers. SU admins see all groups.
+
+**Response** `200 OK`:
+```json
+[
+  {
+    "membership_guid": "...",
+    "user_guid": "...",
+    "user_email": "applicant@example.com",
+    "group_guid": "...",
+    "group_name": "Oncology Planning",
+    "status": "pending",
+    "created_at": "2026-03-18T10:00:00"
+  }
+]
+```
+
+---
+
+### `POST /api/groups/admin/decide`
+
+**Auth:** Bearer token (group admin or SU)
+
+Approve or reject a pending membership request.
+
+**Request:**
+```json
+{
+  "membership_guid": "...",
+  "decision": "approved"
+}
+```
+
+`decision` must be `"approved"` or `"rejected"`.
+
+**Response** `200 OK`:
+```json
+{
+  "membership_guid": "...",
+  "status": "approved",
+  "decided_by": "admin-user-guid"
+}
+```
+
+---
+
+### `POST /api/groups/admin/invite`
+
+**Auth:** Bearer token (group admin or SU)
+
+Create a time-limited invite token for a group.
+
+**Request:**
+```json
+{
+  "group_guid": "...",
+  "hours_valid": 48
+}
+```
+
+**Response** `201 Created`:
+```json
+{
+  "invite_guid": "...",
+  "token": "uuid-invite-token",
+  "group_guid": "...",
+  "expires_at": "2026-03-20T10:00:00+00:00"
+}
+```
+
+---
+
+### `POST /api/groups/join-by-invite`
+
+**Auth:** Bearer token (professional only)
+
+Redeem an invite token to create a pending membership.
+
+**Request:**
+```json
+{
+  "token": "uuid-invite-token"
+}
+```
+
+**Response** `201 Created`:
+```json
+{
+  "membership_guid": "...",
+  "group_guid": "...",
+  "status": "pending"
+}
+```
+
+**Errors:** `404` invalid token, `409` already member, `410` expired
+
+---
+
+## Admin (`/api/admin`)
+
+All admin endpoints require **SU admin** role.
+
+### `GET /api/admin/users`
+
+List all users with full detail (professional memberships, patient data, organisations).
+
+**Response** `200 OK`: Array of user objects (see architecture doc for full schema).
+
+---
+
+### `POST /api/admin/promote-su`
+
+Promote a professional to SU admin. Requires caller's password confirmation.
+
+**Request:**
+```json
+{
+  "user_guid": "target-user-guid",
+  "password": "callers-password"
+}
+```
+
+**Errors:** `401` wrong password, `404` user not found, `400` not a professional, `409` already SU
+
+---
+
+### `DELETE /api/admin/users/<user_guid>`
+
+Delete a user. Cascades: nullifies `decided_by_guid` references, deletes memberships.
+
+**Response** `200 OK`:
+```json
+{
+  "message": "User deleted",
+  "user_guid": "..."
+}
+```
+
+---
+
+### `DELETE /api/admin/groups/<group_guid>`
+
+Delete a group. Cascades: deletes memberships and invites.
+
+---
+
+### `POST /api/admin/assign-group-admin`
+
+Set a user as admin of a group (user must already be a member).
+
+**Request:**
+```json
+{
+  "user_guid": "...",
+  "group_guid": "..."
+}
+```
+
+---
+
+### `GET /api/admin/group-proposals`
+
+List pending group proposals.
+
+### `POST /api/admin/group-proposals`
+
+Approve or reject a group proposal. Approve creates the group.
+
+**Request:**
+```json
+{
+  "proposal_guid": "...",
+  "decision": "approved"
+}
+```
+
+---
+
+### `GET /api/admin/leader-requests`
+
+List pending leader (group admin) requests.
+
+### `POST /api/admin/leader-requests`
+
+Approve or reject. Approve sets `is_admin=True` on the membership.
+
+**Request:**
+```json
+{
+  "leader_request_guid": "...",
+  "decision": "approved"
+}
+```
+
+---
+
+### `GET /api/admin/access-requests`
+
+List pending and endorsed access requests.
+
+### `POST /api/admin/access-requests`
+
+Endorse, approve, or reject. Approve creates user + professional + organisation link + phase memberships.
+
+**Request:**
+```json
+{
+  "access_request_guid": "...",
+  "decision": "approved"
+}
+```
+
+**Response** `200 OK`:
+```json
+{
+  "access_request_guid": "...",
+  "status": "approved",
+  "user_guid": "newly-created-user-guid"
+}
+```
+
+---
+
+### `GET /api/admin/organisations`
+
+List all organisations (FHIR Organization shape).
+
+### `POST /api/admin/organisations`
+
+Create a new organisation.
+
+**Request:**
+```json
+{
+  "name": "New Hospital"
+}
+```
+
+**Response** `201 Created`:
+```json
+{
+  "resourceType": "Organization",
+  "organisation_guid": "...",
+  "name": "New Hospital"
+}
+```
+
+---
+
+### `GET /api/admin/export-users`
+
+Download all users as CSV. Response `Content-Type: text/csv`.
+
+### `POST /api/admin/import-users`
+
+Upload CSV to import users. Multipart form with `file` field. Duplicates (by email) are skipped. New users get temporary password `changeme01`.
+
+**Response** `200 OK`:
+```json
+{
+  "created": 5,
+  "skipped": 2,
+  "errors": []
+}
+```
+
+---
+
+### `GET /api/admin/oath-overview`
+
+Read the service registry (`oath_overview.csv`).
+
+### `PUT /api/admin/oath-overview`
+
+Update the service registry. Send array of row objects.
+
+**Request:**
+```json
+[
+  {
+    "service_name": "formserviceFHIR",
+    "service_url": "https://sso.pdhc.se",
+    "api_health_url": "https://sso.pdhc.se/api/health",
+    "capability_statement_url": "https://sso.pdhc.se/fhir/metadata",
+    "endpoints_url": "",
+    "privilege_level": "public",
+    "notes": "Central SSO"
+  }
+]
+```
+
+---
+
+## Public (`/api/public`)
+
+No authentication required. All endpoints are rate-limited.
+
+### `GET /api/public/organisations`
+
+**Rate Limit:** 60 req/min per IP
+
+Organisation catalog (single source of truth for all services).
+
+**Response** `200 OK`:
+```json
+[
+  {
+    "organisation_guid": "...",
+    "name": "Test Hospital"
+  }
+]
+```
+
+---
+
+### `GET /api/public/groups`
+
+**Rate Limit:** 60 req/min per IP
+
+Read-only group catalog.
+
+---
+
+### `GET /api/public/group-leaders`
+
+**Rate Limit:** 60 req/min per IP
+
+List group leaders and SU admins (used by the access request form).
+
+**Response** `200 OK`:
+```json
+[
+  {
+    "user_guid": "...",
+    "first_name": "Anna",
+    "last_name": "Svensson",
+    "is_su_admin": true
+  }
+]
+```
+
+---
+
+### `POST /api/public/access-request`
+
+**Rate Limit:** 5 req/min per IP
+
+Submit a professional access request.
+
+**Request:**
+```json
+{
+  "email": "new.doctor@hospital.se",
+  "password": "securepass",
+  "first_name": "Erik",
+  "last_name": "Johansson",
+  "professional_role": "doctor",
+  "organisation_guid": "...",
+  "requested_phases": ["planning", "analysis"],
+  "chosen_leader_guid": "..."
+}
+```
+
+`professional_role` must be one of: `doctor`, `nurse`, `other`.
+
+**Response** `201 Created`:
+```json
+{
+  "access_request_guid": "...",
+  "status": "pending",
+  "message": "Access request submitted. A leader will review your request."
+}
+```
+
+**Errors:** `400` validation, `404` org/leader not found, `409` email taken
+
+---
+
+## Error Response Format
+
+All error responses follow this structure:
+
+```json
+{
+  "error": "error_code",
+  "message": "Human-readable description"
+}
+```
+
+Validation errors include a `messages` array:
+
+```json
+{
+  "error": "validation_error",
+  "messages": [
+    "email is required",
+    "password must be at least 8 characters"
+  ]
+}
+```

@@ -1,0 +1,27 @@
+# Environment
+app/.env
+app/venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test results
+results/
+
+# Docs build
+site/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

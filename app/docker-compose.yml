@@ -1,0 +1,40 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sso_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sso_user
+      POSTGRES_PASSWORD: sso_password
+      POSTGRES_DB: sso_db
+    ports:
+      - "9003:5432"
+    volumes:
+      - sso_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sso_user -d sso_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    container_name: sso_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://sso_user:sso_password@db:5432/sso_db
+    env_file:
+      - .env
+    ports:
+      - "9000:9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/api/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  sso_pgdata:

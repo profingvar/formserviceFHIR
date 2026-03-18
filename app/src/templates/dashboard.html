@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — formserviceFHIR{% endblock %}
+{% block content %}
+<h2 class="mb-2">Dashboard</h2>
+
+<div class="grid-2">
+    <div class="card">
+        <h3>Profile</h3>
+        <p><strong>Email:</strong> {{ current_user.email }}</p>
+        <p><strong>Type:</strong>
+            <span class="badge badge-{{ current_user.user_type }}">{{ current_user.user_type }}</span>
+            {% if current_user.is_su_admin %}<span class="badge badge-su">SU Admin</span>{% endif %}
+        </p>
+        {% if professional %}
+            <p><strong>Name:</strong> {{ professional.first_name }} {{ professional.last_name }}</p>
+            <p><strong>Role:</strong> {{ professional.professional_role }}</p>
+        {% endif %}
+        {% if patient %}
+            <p><strong>Personnummer:</strong> {{ patient.personnummer }}</p>
+            <p><strong>In registry:</strong> {{ 'Yes' if patient.in_registry else 'No' }}</p>
+        {% endif %}
+    </div>
+
+    {% if current_user.user_type == 'professional' %}
+    <div class="card">
+        <h3>Organisations</h3>
+        {% if org_names %}
+            <ul>
+            {% for name in org_names %}
+                <li>{{ name }}</li>
+            {% endfor %}
+            </ul>
+        {% else %}
+            <p class="text-muted">No organisations linked.</p>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{% if current_user.user_type == 'professional' %}
+<div class="card">
+    <h3>My Groups</h3>
+    {% if groups %}
+        <table>
+            <thead>
+                <tr><th>Group</th><th>Type</th><th>Status</th><th>Admin</th></tr>
+            </thead>
+            <tbody>
+            {% for g in groups %}
+                <tr>
+                    <td>{{ g.group_name }}</td>
+                    <td>{{ g.group_type }}</td>
+                    <td><span class="badge badge-{{ g.status }}">{{ g.status }}</span></td>
+                    <td>{% if g.is_admin %}<span class="badge badge-admin">Admin</span>{% endif %}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p class="text-muted">No group memberships.</p>
+    {% endif %}
+    <div class="mt-2">
+        <a href="/request-join" class="btn btn-sm btn-primary">Request Membership</a>
+        <a href="/join" class="btn btn-sm btn-secondary">Join by Invite</a>
+        <a href="/suggest-group" class="btn btn-sm btn-secondary">Suggest New Group</a>
+    </div>
+</div>
+{% endif %}
+
+{% if current_user.user_type == 'patient' %}
+<div class="card">
+    <h3>Registry Status</h3>
+    {% if patient and patient.in_registry %}
+        <p>You are registered in the patient registry.</p>
+        {% if patient.registries %}
+            <p><strong>Registries:</strong> {{ patient.registries | join(', ') }}</p>
+        {% endif %}
+    {% else %}
+        <p class="text-muted">You are not currently in any registry.</p>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

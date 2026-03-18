@@ -1,0 +1,353 @@
+"""Phase 4 tests — authentication API: login, me, me/service, logout, change-password."""
+import uuid
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from src.app import create_app
+from src.db import get_session
+from src.services.auth_service import hash_password
+from src.services.jwt_service import issue_token, decode_token
+from src.models.user import User
+from src.models.patient import Patient
+from src.models.professional import Professional
+from src.models.organisation import Organisation
+from src.models.user_organisation import UserOrganisation
+from src.models.group import Group
+from src.models.membership import Membership
+
+
+SECRET = 'test-secret-key-not-for-production'
+
+
+@pytest.fixture
+def app():
+    from src.middleware.rate_limit import reset_rate_limits
+    reset_rate_limits()
+    app = create_app({
+        'TESTING': True,
+        'SECRET_KEY': SECRET,
+        'WTF_CSRF_ENABLED': False,
+        'SESSION_EXPIRY_HOURS': 1,
+        'ALLOWED_ORIGINS': ['http://localhost:9000'],
+        'ALLOWED_CALLBACK_URLS': ['http://localhost:9000/callback'],
+        'SERVICE_CREDENTIALS': {'test-client': 'test-secret'},
+    })
+    yield app
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+
+@pytest.fixture
+def seed_data(app):
+    """Seed test users: SU admin professional, regular professional, patient."""
+    with app.app_context():
+        session = get_session()
+
+        # Organisation
+        org = Organisation(guid=str(uuid.uuid4()), name='Test Hospital')
+        session.add(org)
+        session.flush()
+
+        # SU admin (professional)
+        su_user = User(
+            guid=str(uuid.uuid4()),
+            email='admin@test.com',
+            password_hash=hash_password('adminpass1'),
+            user_type='professional',
+            is_su_admin=True,
+        )
+        session.add(su_user)
+        session.flush()
+        su_prof = Professional(
+            guid=str(uuid.uuid4()), user_id=su_user.id,
+            professional_role='doctor', first_name='Admin', last_name='User',
+        )
+        session.add(su_prof)
+
+        # Regular professional
+        pro_user = User(
+            guid=str(uuid.uuid4()),
+            email='pro@test.com',
+            password_hash=hash_password('propass12'),
+            user_type='professional',
+            is_su_admin=False,
+        )
+        session.add(pro_user)
+        session.flush()
+        pro_prof = Professional(
+            guid=str(uuid.uuid4()), user_id=pro_user.id,
+            professional_role='nurse', first_name='Pro', last_name='User',
+        )
+        session.add(pro_prof)
+
+        # Link professional to org
+        uo = UserOrganisation(user_guid=pro_user.guid, organisation_guid=org.guid)
+        session.add(uo)
+
+        # Group + membership
+        group = Group(guid=str(uuid.uuid4()), name='Planning A', group_type='planning')
+        session.add(group)
+        session.flush()
+        mem = Membership(
+            guid=str(uuid.uuid4()), user_guid=pro_user.guid,
+            group_guid=group.guid, status='approved', is_admin=False,
+        )
+        session.add(mem)
+
+        # Patient
+        pat_user = User(
+            guid=str(uuid.uuid4()),
+            email='patient@test.com',
+            password_hash=hash_password('patpass12'),
+            user_type='patient',
+            is_su_admin=False,
+        )
+        session.add(pat_user)
+        session.flush()
+        patient = Patient(
+            guid=str(uuid.uuid4()), user_id=pat_user.id,
+            personnummer='199001011234', organisation_guid=org.guid,
+            in_registry=True, registries=['INCA', 'SRQ'],
+        )
+        session.add(patient)
+
+        session.commit()
+
+        data = {
+            'su_user': su_user,
+            'pro_user': pro_user,
+            'pat_user': pat_user,
+            'org': org,
+            'group': group,
+        }
+        # Detach from session to avoid lazy load issues
+        result = {
+            'su_guid': su_user.guid,
+            'su_email': su_user.email,
+            'pro_guid': pro_user.guid,
+            'pro_email': pro_user.email,
+            'pat_guid': pat_user.guid,
+            'pat_email': pat_user.email,
+            'org_guid': org.guid,
+            'group_guid': group.guid,
+        }
+        session.close()
+        return result
+
+
+def _login(client, email, password):
+    """Helper: login and return token."""
+    resp = client.post('/api/auth/login', json={'email': email, 'password': password})
+    return resp
+
+
+def _auth_header(token):
+    return {'Authorization': f'Bearer {token}'}
+
+
+# --- Login ---
+
+class TestLogin:
+    def test_login_success(self, client, seed_data):
+        resp = _login(client, 'pro@test.com', 'propass12')
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert 'token' in data
+        assert data['user_guid'] == seed_data['pro_guid']
+
+    def test_login_wrong_password(self, client, seed_data):
+        resp = _login(client, 'pro@test.com', 'wrongpass')
+        assert resp.status_code == 401
+
+    def test_login_nonexistent_email(self, client, seed_data):
+        resp = _login(client, 'nobody@test.com', 'anything')
+        assert resp.status_code == 401
+
+    def test_login_missing_fields(self, client, seed_data):
+        resp = client.post('/api/auth/login', json={'email': 'pro@test.com'})
+        assert resp.status_code == 400
+
+    def test_login_sso_handshake_redirect(self, client, seed_data):
+        resp = client.post('/api/auth/login', json={
+            'email': 'pro@test.com',
+            'password': 'propass12',
+            'next': 'http://localhost:9000/callback',
+            'state': 'abc123',
+        })
+        assert resp.status_code == 302
+        location = resp.headers['Location']
+        assert 'token=' in location
+        assert 'state=abc123' in location
+
+    def test_login_sso_reject_unallowed_callback(self, client, seed_data):
+        resp = client.post('/api/auth/login', json={
+            'email': 'pro@test.com',
+            'password': 'propass12',
+            'next': 'http://evil.com/callback',
+        })
+        assert resp.status_code == 400
+        data = resp.get_json()
+        assert data['error'] == 'invalid_redirect'
+
+    def test_login_sso_handshake_fail_redirect(self, client, seed_data):
+        resp = client.post('/api/auth/login', json={
+            'email': 'pro@test.com',
+            'password': 'wrongpass',
+            'next': 'http://localhost:9000/callback',
+        })
+        assert resp.status_code == 302
+        location = resp.headers['Location']
+        assert 'error=authentication_failed' in location
+
+
+# --- /me ---
+
+class TestMe:
+    def test_me_professional(self, client, seed_data):
+        login_resp = _login(client, 'pro@test.com', 'propass12')
+        token = login_resp.get_json()['token']
+
+        resp = client.get('/api/auth/me', headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['user_guid'] == seed_data['pro_guid']
+        assert data['user_type'] == 'professional'
+        assert data['is_su_admin'] is False
+        assert 'professional_guid' in data
+        assert data['professional_role'] == 'nurse'
+        assert seed_data['org_guid'] in data['organization_ids']
+        assert len(data['groups']) == 1
+        assert data['groups'][0]['group_type'] == 'planning'
+        assert 'planning' in data['effective_phases']
+
+    def test_me_patient(self, client, seed_data):
+        login_resp = _login(client, 'patient@test.com', 'patpass12')
+        token = login_resp.get_json()['token']
+
+        resp = client.get('/api/auth/me', headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['user_type'] == 'patient'
+        assert 'patient_guid' in data
+        assert data['in_registry'] is True
+        assert 'INCA' in data['registries']
+        assert data['fhir_resource_type'] == 'Patient'
+
+    def test_me_su_admin(self, client, seed_data):
+        login_resp = _login(client, 'admin@test.com', 'adminpass1')
+        token = login_resp.get_json()['token']
+
+        resp = client.get('/api/auth/me', headers=_auth_header(token))
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['is_su_admin'] is True
+
+    def test_me_no_token(self, client, seed_data):
+        resp = client.get('/api/auth/me')
+        assert resp.status_code == 401
+
+
+# --- /me/service ---
+
+class TestMeService:
+    def test_me_service_valid_credentials(self, client, seed_data):
+        login_resp = _login(client, 'pro@test.com', 'propass12')
+        token = login_resp.get_json()['token']
+
+        resp = client.get('/api/auth/me/service', headers={
+            **_auth_header(token),
+            'X-SSO-Client-Id': 'test-client',
+            'X-SSO-Client-Secret': 'test-secret',
+        })
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['user_guid'] == seed_data['pro_guid']
+
+    def test_me_service_invalid_credentials(self, client, seed_data):
+        login_resp = _login(client, 'pro@test.com', 'propass12')
+        token = login_resp.get_json()['token']
+
+        resp = client.get('/api/auth/me/service', headers={
+            **_auth_header(token),
+            'X-SSO-Client-Id': 'bad-client',
+            'X-SSO-Client-Secret': 'bad-secret',
+        })
+        assert resp.status_code == 403
+
+    def test_me_service_missing_credentials(self, client, seed_data):
+        login_resp = _login(client, 'pro@test.com', 'propass12')
+        token = login_resp.get_json()['token']
+
+        resp = client.get('/api/auth/me/service', headers=_auth_header(token))
+        assert resp.status_code == 403
+
+
+# --- Logout ---
+
+class TestLogout:
+    def test_logout_revokes_token(self, client, seed_data):
+        login_resp = _login(client, 'pro@test.com', 'propass12')
+        token = login_resp.get_json()['token']
+
+        # Logout
+        resp = client.post('/api/auth/logout', headers=_auth_header(token))
+        assert resp.status_code == 200
+
+        # Token should now be revoked — /me should fail
+        resp = client.get('/api/auth/me', headers=_auth_header(token))
+        assert resp.status_code == 401
+
+    def test_logout_without_auth(self, client, seed_data):
+        resp = client.post('/api/auth/logout')
+        assert resp.status_code == 401
+
+
+# --- Change Password ---
+
+class TestChangePassword:
+    def test_change_password_success(self, client, seed_data):
+        login_resp = _login(client, 'pro@test.com', 'propass12')
+        token = login_resp.get_json()['token']
+
+        resp = client.post('/api/auth/change-password', headers=_auth_header(token), json={
+            'current_password': 'propass12',
+            'new_password': 'newpass123',
+        })
+        assert resp.status_code == 200
+
+        # Can login with new password
+        resp2 = _login(client, 'pro@test.com', 'newpass123')
+        assert resp2.status_code == 200
+
+    def test_change_password_wrong_current(self, client, seed_data):
+        login_resp = _login(client, 'admin@test.com', 'adminpass1')
+        token = login_resp.get_json()['token']
+
+        resp = client.post('/api/auth/change-password', headers=_auth_header(token), json={
+            'current_password': 'wrongpass',
+            'new_password': 'newpass123',
+        })
+        assert resp.status_code == 401
+
+    def test_change_password_too_short(self, client, seed_data):
+        login_resp = _login(client, 'admin@test.com', 'adminpass1')
+        token = login_resp.get_json()['token']
+
+        resp = client.post('/api/auth/change-password', headers=_auth_header(token), json={
+            'current_password': 'adminpass1',
+            'new_password': 'short',
+        })
+        assert resp.status_code == 400
+
+    def test_change_password_missing_fields(self, client, seed_data):
+        login_resp = _login(client, 'admin@test.com', 'adminpass1')
+        token = login_resp.get_json()['token']
+
+        resp = client.post('/api/auth/change-password', headers=_auth_header(token), json={
+            'current_password': 'adminpass1',
+        })
+        assert resp.status_code == 400

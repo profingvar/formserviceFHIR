@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Request Professional Access — formserviceFHIR{% endblock %}
+{% block content %}
+<div style="max-width: 550px; margin: 2rem auto;">
+    <div class="card">
+        <h2>Request Professional Access</h2>
+        <p class="text-muted mb-2">Submit a request to join as a healthcare professional. An administrator will review your request.</p>
+        <form method="post" action="/request-access">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="first_name">First Name</label>
+                    <input type="text" id="first_name" name="first_name" required>
+                </div>
+                <div class="form-group">
+                    <label for="last_name">Last Name</label>
+                    <input type="text" id="last_name" name="last_name" required>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" name="email" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" required minlength="8">
+                <p class="hint">Minimum 8 characters</p>
+            </div>
+            <div class="form-group">
+                <label for="professional_role">Professional Role</label>
+                <select id="professional_role" name="professional_role" required>
+                    <option value="">Select role...</option>
+                    <option value="doctor">Doctor</option>
+                    <option value="nurse">Nurse</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="organisation_guid">Organisation</label>
+                <select id="organisation_guid" name="organisation_guid" required>
+                    <option value="">Select organisation...</option>
+                    {% for org in organisations %}
+                        <option value="{{ org.organisation_guid }}">{{ org.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Requested Phases</label>
+                <div class="checkbox-group">
+                    <label><input type="checkbox" name="requested_phases" value="planning"> Planning</label>
+                    <label><input type="checkbox" name="requested_phases" value="request"> Request</label>
+                    <label><input type="checkbox" name="requested_phases" value="provider"> Provider</label>
+                    <label><input type="checkbox" name="requested_phases" value="analysis"> Analysis</label>
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="chosen_leader_guid">Chosen Leader / Supervisor</label>
+                <select id="chosen_leader_guid" name="chosen_leader_guid" required>
+                    <option value="">Select leader...</option>
+                    {% for leader in leaders %}
+                        <option value="{{ leader.user_guid }}">{{ leader.first_name }} {{ leader.last_name }}{% if leader.is_su_admin %} (SU Admin){% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width:100%;">Submit Request</button>
+        </form>
+        <p class="text-muted text-center mt-2" style="font-size:0.85rem;">
+            Already have an account? <a href="/login">Login</a>
+        </p>
+    </div>
+</div>
+{% endblock %}

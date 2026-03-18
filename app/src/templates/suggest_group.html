@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Suggest New Group — formserviceFHIR{% endblock %}
+{% block content %}
+<div style="max-width: 450px; margin: 2rem auto;">
+    <div class="card">
+        <h2>Suggest New Group</h2>
+        <p class="text-muted mb-2">Propose a new group for SU admin approval.</p>
+        <form method="post" action="/suggest-group">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="proposed_name">Group Name</label>
+                <input type="text" id="proposed_name" name="proposed_name" required>
+            </div>
+            <div class="form-group">
+                <label for="group_type">Group Type</label>
+                <select id="group_type" name="group_type" required>
+                    <option value="">Select type...</option>
+                    <option value="planning">Planning</option>
+                    <option value="request">Request</option>
+                    <option value="provider">Provider</option>
+                    <option value="analysis">Analysis</option>
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width:100%;">Submit Proposal</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

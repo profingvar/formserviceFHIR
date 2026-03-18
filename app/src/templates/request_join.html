@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Request Group Membership — formserviceFHIR{% endblock %}
+{% block content %}
+<div style="max-width: 450px; margin: 2rem auto;">
+    <div class="card">
+        <h2>Request Group Membership</h2>
+        <form method="post" action="/request-join">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="group_guid">Group</label>
+                <select id="group_guid" name="group_guid" required>
+                    <option value="">Select group...</option>
+                    {% for g in available_groups %}
+                        <option value="{{ g.group_guid }}">{{ g.name }} ({{ g.group_type }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="btn btn-primary" style="width:100%;">Request Membership</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
