@@ -1,4 +1,4 @@
-"""Pytest fixtures for formserviceFHIR tests.
+"""Pytest fixtures for sso.pdhc tests.
 
 Provides fixtures for all roles: patient, professional, group_admin, su_admin.
 Handles test DB lifecycle (in-memory SQLite via StaticPool).

@@ -1,6 +1,6 @@
 # Integration Guide
 
-How to connect a downstream service to the formserviceFHIR SSO.
+How to connect a downstream service to the sso.pdhc SSO.
 
 ## Overview
 

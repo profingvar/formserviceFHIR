@@ -50,7 +50,7 @@ check() {
 }
 
 log "============================================================"
-log "formserviceFHIR SSO — Endpoint Test Report"
+log "sso.pdhc SSO — Endpoint Test Report"
 log "Base URL: $BASE_URL"
 log "Timestamp: $TIMESTAMP"
 log "============================================================"

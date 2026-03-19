@@ -127,3 +127,38 @@ All edited files listed with full path (Rule 17).
 | 2026-03-18 | claude1_sso/app/src/app.py      | Updated — security headers, cookie security, MAX_CONTENT_LENGTH |
 | 2026-03-18 | claude1_sso/progress.md        | Updated — Phase 13 complete, all phases done |
 | 2026-03-18 | claude1_sso/changed_files.md   | Updated — Phase 13 files tracked |
+| 2026-03-18 | start.sh                       | Updated — renamed formserviceFHIR → sso.pdhc, fixed python3 → python for venv |
+| 2026-03-18 | app/src/templates/base.html    | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/landing.html | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/change_password.html | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/dashboard.html | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/docs.html    | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/group_admin.html | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/join.html    | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/login.html   | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/register_patient.html | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/request_access.html | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/request_join.html | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/su_admin.html | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/templates/suggest_group.html | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/src/fhir/capability_statement.py | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/.env                       | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/.env.example               | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/safe_restart.sh            | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/scripts/test_endpoints.sh  | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/tests/conftest.py          | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/tests/test_frontend.py     | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/docs/mkdocs.yml            | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/docs/docs/index.md         | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/docs/docs/integration-guide.md | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/docs/docs/api-reference.md | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | initial_sql_design.txt         | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | progress.md                    | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | readme.md                      | Updated — renamed formserviceFHIR → sso.pdhc |
+| 2026-03-18 | app/docs/docs/subservice-onboarding.md | Created — comprehensive subservice onboarding & acceptance specification |
+| 2026-03-18 | app/docs/mkdocs.yml            | Updated — added subservice-onboarding + pre-deployment-checklist to nav |
+| 2026-03-18 | app/docs/docs/pre-deployment-checklist.md | Created — comprehensive pre-deployment checklist (keys, secrets, first login, all config) |
+| 2026-03-18 | app/src/routes/frontend.py     | Updated — added subservice-onboarding + pre-deployment-checklist to ALLOWED_DOCS |
+| 2026-03-18 | app/src/templates/su_admin.html | Updated — added documentation download section |
+| 2026-03-18 | pack_deploy.sh                 | Created — builds deployment tarball excluding venv, .env, .git, caches |
+| 2026-03-18 | server_deploy.sh               | Created — server-side deployment script (unpack, venv, deps, DB init, gunicorn) |

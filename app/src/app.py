@@ -57,7 +57,8 @@ def create_app(config_override=None):
 
     # Cookie security
     if not app.config.get('TESTING'):
-        app.config['SESSION_COOKIE_SECURE'] = True
+        is_dev = app.config.get('FLASK_ENV') == 'development'
+        app.config['SESSION_COOKIE_SECURE'] = not is_dev
         app.config['SESSION_COOKIE_HTTPONLY'] = True
         app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 

@@ -1,10 +1,10 @@
-# formserviceFHIR SSO Documentation
+# sso.pdhc SSO Documentation
 
-Welcome to the documentation for **formserviceFHIR** — the central SSO/OAuth service for PDHC.
+Welcome to the documentation for **sso.pdhc** — the central SSO/OAuth service for PDHC.
 
-## What is formserviceFHIR?
+## What is sso.pdhc?
 
-formserviceFHIR is a Flask-based SSO server that:
+sso.pdhc is a Flask-based SSO server that:
 
 - Issues **JWT tokens** for authenticated users (patients and professionals)
 - Manages **users, groups, memberships, and organisations**

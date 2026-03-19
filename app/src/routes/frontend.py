@@ -1092,8 +1092,10 @@ ALLOWED_DOCS = {
     'api-reference.md': 'API Reference',
     'architecture.md': 'Architecture Overview',
     'integration-guide.md': 'Integration Guide',
+    'subservice-onboarding.md': 'Subservice Onboarding & Acceptance',
     'admin-manual.md': 'Admin Manual',
     'deployment-guide.md': 'Deployment Guide',
+    'pre-deployment-checklist.md': 'Pre-Deployment Checklist',
     'user-guide.md': 'User Guide',
 }
 

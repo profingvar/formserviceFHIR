@@ -637,7 +637,7 @@ Update the service registry. Send array of row objects.
 ```json
 [
   {
-    "service_name": "formserviceFHIR",
+    "service_name": "sso.pdhc",
     "service_url": "https://sso.pdhc.se",
     "api_health_url": "https://sso.pdhc.se/api/health",
     "capability_statement_url": "https://sso.pdhc.se/fhir/metadata",

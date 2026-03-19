@@ -1,5 +1,5 @@
 -- ============================================================
--- formserviceFHIR — Reference SQL Schema
+-- sso.pdhc — Reference SQL Schema
 -- FHIR 5 aligned identifiers. GUIDs for all external references.
 -- Internal PK is integer (serial). This is reference only (Rule 5).
 -- ============================================================

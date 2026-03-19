@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# formserviceFHIR — safe_restart.sh
+# sso.pdhc — safe_restart.sh
 # Server-side restart script. Stops and restarts all services
 # with health verification before declaring success.
 # ============================================================

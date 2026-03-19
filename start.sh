@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# formserviceFHIR — start.sh
+# sso.pdhc — start.sh
 # Single entry point: kills owned ports, starts DB + app.
 # Ctrl+C gracefully shuts down all services.
 # ============================================================
@@ -79,7 +79,7 @@ trap cleanup SIGINT SIGTERM
 # ============================================================
 # Main
 # ============================================================
-info "=== formserviceFHIR starting ==="
+info "=== sso.pdhc starting ==="
 
 kill_ports
 check_docker
@@ -104,7 +104,7 @@ cd "$APP_DIR"
 FLASK_APP=src.app:create_app FLASK_ENV=development python -m flask run --host=0.0.0.0 --port=9000 &
 FLASK_PID=$!
 
-info "=== formserviceFHIR is running ==="
+info "=== sso.pdhc is running ==="
 info "  App:  http://localhost:9000"
 info "  DB:   localhost:9003"
 info "  Press Ctrl+C to stop."

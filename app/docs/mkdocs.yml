@@ -1,4 +1,4 @@
-site_name: formserviceFHIR SSO Documentation
+site_name: sso.pdhc SSO Documentation
 site_description: Central SSO/OAuth service for PDHC
 site_url: https://sso.pdhc.se/docs/
 
@@ -34,6 +34,8 @@ nav:
   - Architecture: architecture.md
   - API Reference: api-reference.md
   - Integration Guide: integration-guide.md
+  - Subservice Onboarding: subservice-onboarding.md
   - Admin Manual: admin-manual.md
   - Deployment Guide: deployment-guide.md
+  - Pre-Deployment Checklist: pre-deployment-checklist.md
   - User Guide: user-guide.md

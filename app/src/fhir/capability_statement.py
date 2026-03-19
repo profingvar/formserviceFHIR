@@ -14,11 +14,11 @@ def _build_capability_statement():
     """Build the CapabilityStatement resource dict."""
     return {
         "resourceType": "CapabilityStatement",
-        "id": "formservicefhir-sso",
+        "id": "sso-pdhc",
         "url": "https://sso.pdhc.se/fhir/metadata",
         "version": "1.0.0",
-        "name": "FormServiceFHIR_SSO",
-        "title": "formserviceFHIR SSO Capability Statement",
+        "name": "SSO_PDHC",
+        "title": "sso.pdhc SSO Capability Statement",
         "status": "active",
         "experimental": False,
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -32,11 +32,11 @@ def _build_capability_statement():
         "fhirVersion": "5.0.0",
         "format": ["json"],
         "software": {
-            "name": "formserviceFHIR",
+            "name": "sso.pdhc",
             "version": "1.0.0",
         },
         "implementation": {
-            "description": "formserviceFHIR SSO Service",
+            "description": "sso.pdhc SSO Service",
             "url": "https://sso.pdhc.se",
         },
         "rest": [

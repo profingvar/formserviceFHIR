@@ -110,7 +110,7 @@ class TestBaseTemplate:
         resp = client.get('/')
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert 'formserviceFHIR' in html
+        assert 'sso.pdhc' in html
 
     def test_login_page_has_csrf(self, client, app):
         resp = client.get('/login')
@@ -448,7 +448,7 @@ class TestLandingPage:
         resp = client.get('/')
         assert resp.status_code == 200
         html = resp.data.decode()
-        assert 'formserviceFHIR' in html
+        assert 'sso.pdhc' in html
         assert 'Registered Services' in html
 
 

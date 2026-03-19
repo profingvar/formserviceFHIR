@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}SU Admin — formserviceFHIR{% endblock %}
+{% block title %}SU Admin — sso.pdhc{% endblock %}
 {% block container_class %}container-wide{% endblock %}
 {% block content %}
 <h2 class="mb-2">SU Admin Panel</h2>
@@ -196,6 +196,25 @@
         <p class="text-muted">No groups.</p>
         {% endif %}
     </div>
+</div>
+
+<!-- Documentation Downloads -->
+<div class="card">
+    <h3>Documentation</h3>
+    <p class="text-muted mb-1" style="font-size:0.85rem;">All manuals and specifications available for download.</p>
+    <table>
+        <thead><tr><th>Document</th><th>Download</th></tr></thead>
+        <tbody>
+            <tr><td>API Reference</td><td><a href="/docs/download/api-reference.md" class="btn btn-sm btn-secondary">Download</a></td></tr>
+            <tr><td>Architecture Overview</td><td><a href="/docs/download/architecture.md" class="btn btn-sm btn-secondary">Download</a></td></tr>
+            <tr><td>Integration Guide</td><td><a href="/docs/download/integration-guide.md" class="btn btn-sm btn-secondary">Download</a></td></tr>
+            <tr><td>Subservice Onboarding & Acceptance</td><td><a href="/docs/download/subservice-onboarding.md" class="btn btn-sm btn-secondary">Download</a></td></tr>
+            <tr><td>Admin Manual</td><td><a href="/docs/download/admin-manual.md" class="btn btn-sm btn-secondary">Download</a></td></tr>
+            <tr><td>Deployment Guide</td><td><a href="/docs/download/deployment-guide.md" class="btn btn-sm btn-secondary">Download</a></td></tr>
+            <tr><td>Pre-Deployment Checklist</td><td><a href="/docs/download/pre-deployment-checklist.md" class="btn btn-sm btn-secondary">Download</a></td></tr>
+            <tr><td>User Guide</td><td><a href="/docs/download/user-guide.md" class="btn btn-sm btn-secondary">Download</a></td></tr>
+        </tbody>
+    </table>
 </div>
 
 <!-- Oath Overview -->
