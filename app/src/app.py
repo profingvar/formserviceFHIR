@@ -4,7 +4,8 @@ import time
 from flask import Flask, jsonify
 
 from src.config import Config, TestConfig
-from src.db import init_db, close_db, engine
+from src.db import init_db, close_db
+import src.db as _db
 from src.middleware.csrf import init_csrf
 from src.middleware.cors import init_cors
 from src.services.audit_log import init_audit_log
@@ -35,6 +36,7 @@ def create_app(config_override=None):
             ALLOWED_CALLBACK_URLS=cfg.ALLOWED_CALLBACK_URLS,
             SERVICE_CREDENTIALS=cfg.SERVICE_CREDENTIALS,
             WTF_CSRF_ENABLED=True,
+            WTF_CSRF_SSL_STRICT=False,
         )
 
     # Apply overrides (for testing)
@@ -54,6 +56,11 @@ def create_app(config_override=None):
 
     # Teardown: commit/rollback session per request
     app.teardown_appcontext(close_db)
+
+    # Trust reverse proxy headers (X-Forwarded-For, X-Forwarded-Proto)
+    if not app.config.get('TESTING'):
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     # Cookie security
     if not app.config.get('TESTING'):
@@ -110,9 +117,9 @@ def create_app(config_override=None):
     @app.route('/api/health')
     def health():
         db_ok = False
-        if engine is not None:
+        if _db.engine is not None:
             try:
-                with engine.connect() as conn:
+                with _db.engine.connect() as conn:
                     conn.execute(conn.default_schema_name if False else __import__('sqlalchemy').text('SELECT 1'))
                 db_ok = True
             except Exception:

@@ -162,3 +162,7 @@ All edited files listed with full path (Rule 17).
 | 2026-03-18 | app/src/templates/su_admin.html | Updated — added documentation download section |
 | 2026-03-18 | pack_deploy.sh                 | Created — builds deployment tarball excluding venv, .env, .git, caches |
 | 2026-03-18 | server_deploy.sh               | Created — server-side deployment script (unpack, venv, deps, DB init, gunicorn) |
+| 2026-03-19 | nginx_implement_server19March.md | Created — generic nginx server installation guide (isolated environment) |
+| 2026-03-19 | app/scripts/server_backup.sh   | Created — full server backup script (files + DB dump to ~/backups) |
+| 2026-03-19 | app/src/app.py                 | Updated — ProxyFix middleware, WTF_CSRF_SSL_STRICT, db import fix |
+| 2026-03-19 | start.sh                       | Updated — Colima socket, venv auto-create, gunicorn daemon, health check |
