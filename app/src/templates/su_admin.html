@@ -320,23 +320,17 @@
                 <input type="text" id="group_name" name="name" required placeholder="Group name">
             </div>
             <div class="form-group" style="margin-bottom:0;">
-                <label for="category" title="Category label only — does not grant phase access. Phases are granted per-user in the Users table.">Category</label>
+                <label for="category" title="Organisational label only — does not grant phase access. Phases are granted per-user in the Users table.">Category</label>
                 <input type="text" id="category" name="category" required
-                       list="category-suggestions"
-                       placeholder="e.g. planning, request, analysis…"
-                       title="Free-form category label (#60). Suggestions cover the legacy four; SU can invent new ones.">
-                <datalist id="category-suggestions">
-                    <option value="planning">
-                    <option value="request">
-                    <option value="provider">
-                    <option value="analysis">
-                </datalist>
+                       placeholder="e.g. oncology, regional, research…"
+                       title="Free-form organisational label (#60). Purely descriptive — has no effect on access.">
             </div>
             <button type="submit" class="btn btn-primary">Create</button>
         </form>
         <p class="text-muted" style="margin:0 0 0.5rem 0;font-size:0.85em;">
-            Category is a label only — group membership does <strong>not</strong> grant phase access (#57).
-            Phases are managed per-user in the Users table above.
+            Category is a free-form organisational label. Group membership does <strong>not</strong> grant phase
+            access (#57) — avoid using phase names (planning/request/provider/analysis) as categories, they have no
+            effect here. Phases are managed per-user in the Users table above.
         </p>
         {% if groups %}
         <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
