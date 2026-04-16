@@ -12,6 +12,7 @@ from src.models import (
     Group, Membership, GroupProposal, LeaderRequest, AccessRequest,
     Invite, RevokedToken,
 )
+from src.models.user_phase import UserPhase  # noqa: F401  # register for create_all
 
 
 @pytest.fixture(scope='module')
@@ -33,6 +34,7 @@ class TestAllTablesCreated:
         'users', 'patients', 'professionals', 'organisations',
         'user_organisations', 'groups', 'memberships', 'group_proposals',
         'leader_requests', 'access_requests', 'invites', 'revoked_tokens',
+        'user_phases',  # #46: direct phase grants
     ]
 
     def test_all_tables_exist(self, db_session):
@@ -156,12 +158,19 @@ class TestGroupModel:
     """Group model tests."""
 
     def test_create_group(self, db_session):
-        group = Group(name='Planning Team A', group_type='planning')
+        group = Group(name='Planning Team A', category='planning')
         db_session.add(group)
         db_session.commit()
         assert group.guid is not None
         assert group.fhir_resource_type == 'Group'
-        assert group.group_type == 'planning'
+        assert group.category == 'planning'
+
+    def test_category_is_free_form(self, db_session):
+        """#60: category is now a plain varchar — SU can invent new labels."""
+        group = Group(name='Bespoke Team', category='governance-board')
+        db_session.add(group)
+        db_session.commit()
+        assert group.category == 'governance-board'
 
 
 class TestMembershipModel:
@@ -192,7 +201,7 @@ class TestGroupProposalModel:
         user = db_session.query(User).first()
         prop = GroupProposal(
             proposed_name='New Analysis Group',
-            group_type='analysis',
+            category='analysis',
             requested_by_guid=user.guid,
         )
         db_session.add(prop)

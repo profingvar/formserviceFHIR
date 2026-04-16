@@ -67,7 +67,7 @@ def seed_data(app):
         session.add(org)
         session.flush()
 
-        group = Group(guid=str(uuid.uuid4()), name='Planning Alpha', group_type='planning')
+        group = Group(guid=str(uuid.uuid4()), name='Planning Alpha', category='planning')
         session.add(group)
         session.flush()
 
@@ -123,7 +123,7 @@ def seed_data(app):
         # Group proposal
         proposal = GroupProposal(
             guid=str(uuid.uuid4()), proposed_name='New Research',
-            group_type='analysis', requested_by_guid=reg_user.guid,
+            category='analysis', requested_by_guid=reg_user.guid,
             status='pending',
         )
         session.add(proposal)
@@ -356,6 +356,38 @@ class TestAccessRequests:
         data = resp.get_json()
         assert data['status'] == 'approved'
         assert data['user_guid'] is not None
+        # #57: requested phases are advisory metadata surfaced for SU
+        # follow-up; they are NOT auto-granted via memberships or
+        # UserPhase rows on approval.
+        assert data.get('requested_phases_pending_su_grant') == ['planning']
+
+    def test_approve_access_request_does_not_grant_phases(self, client, seed_data, app):
+        """#57: approving an access request must NOT create any
+        UserPhase row for the new user, and must NOT create a membership
+        in a group whose category matches a requested phase.
+        """
+        token = _get_token(client, 'su@test.com', 'supass123')
+        resp = client.post('/api/admin/access-requests', headers=_auth_header(token),
+                           json={'access_request_guid': seed_data['ar_guid'],
+                                 'decision': 'approved'})
+        assert resp.status_code == 200
+        new_user_guid = resp.get_json()['user_guid']
+
+        from src.models.user_phase import UserPhase
+        from src.models.membership import Membership
+        with app.app_context():
+            s = get_session()
+            try:
+                phases = s.query(UserPhase).filter_by(
+                    user_guid=new_user_guid).all()
+                assert phases == [], \
+                    "approve_access_request must not create UserPhase rows (#57)"
+                mems = s.query(Membership).filter_by(
+                    user_guid=new_user_guid).all()
+                assert mems == [], \
+                    "approve_access_request must not auto-create memberships (#57)"
+            finally:
+                s.close()
 
     def test_reject_access_request(self, client, seed_data):
         token = _get_token(client, 'su@test.com', 'supass123')

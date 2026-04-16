@@ -1,4 +1,8 @@
-"""Group proposal model — professional suggests new group, SU decides."""
+"""Group proposal model — professional suggests new group, SU decides.
+
+#60: the proposed group's `group_type` column is renamed to `category` and
+loosened to a free-form varchar, matching the parent `Group` model.
+"""
 import uuid
 from datetime import datetime, timezone
 
@@ -14,8 +18,8 @@ class GroupProposal(Base):
     id = Column(Integer, primary_key=True)
     guid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
     proposed_name = Column(String(255), nullable=False)
-    group_type = Column(Enum('planning', 'request', 'provider', 'analysis', name='group_type_enum',
-                             create_type=False), nullable=False)
+    # #60: was `group_type` (enum). Free-form category now; matches Group.category.
+    category = Column(String(64), nullable=False)
     requested_by_guid = Column(String(36), ForeignKey('users.guid'), nullable=False)
     status = Column(Enum('pending', 'approved', 'rejected', name='proposal_status_enum'),
                     nullable=False, default='pending')

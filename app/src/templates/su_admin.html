@@ -4,9 +4,9 @@
 {% block content %}
 <h2 class="mb-2">SU Admin Panel</h2>
 
-<!-- Users -->
+<!-- Person Registry -->
 <div class="card">
-    <h3>Users ({{ users | length }})</h3>
+    <h3>Person Registry ({{ users | length }})</h3>
     <div class="mb-1">
         <a href="/api/admin/export-users" class="btn btn-sm btn-secondary" target="_blank">Export CSV</a>
         <form method="post" action="/admin/import-users" enctype="multipart/form-data" style="display:inline-block;">
@@ -18,15 +18,107 @@
     <div style="overflow-x:auto;">
     <table>
         <thead>
-            <tr><th>Email</th><th>Type</th><th>Name</th><th>Role</th><th>SU</th><th>Created</th><th>Actions</th></tr>
+            <tr>
+                <th>GUID</th>
+                <th>Email</th>
+                <th>Type</th>
+                <th>Name</th>
+                <th>Role / Personnr</th>
+                <th>Organisation</th>
+                <th>Phases</th>
+                <th>SU</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
         </thead>
         <tbody>
         {% for u in users %}
             <tr>
+                <td><code style="font-size:0.7rem;">{{ u.user_guid[:8] }}...</code></td>
                 <td>{{ u.email }}</td>
                 <td><span class="badge badge-{{ u.user_type }}">{{ u.user_type }}</span></td>
                 <td>{{ u.first_name or '' }} {{ u.last_name or '' }}</td>
-                <td>{{ u.professional_role or '-' }}</td>
+                <td>{% if u.user_type == 'professional' %}{{ u.professional_role or '-' }}{% else %}{{ u.personnummer or '-' }}{% endif %}</td>
+                <td>
+                    {% if u.user_type == 'professional' %}
+                        {% for org_id in u.organization_ids %}
+                            {% set org_name = '' %}
+                            {% for o in organisations %}
+                                {% if o.organisation_guid == org_id %}
+                                    {% set org_name = o.name %}
+                                {% endif %}
+                            {% endfor %}
+                            <span style="display:inline-flex;align-items:center;gap:2px;background:var(--badge-bg,#e5e7eb);border-radius:4px;padding:1px 6px;font-size:0.75rem;margin:1px 0;">
+                                {{ org_name or org_id[:8] }}
+                                <form method="post" action="/admin/remove-org" style="display:inline;margin:0;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
+                                    <input type="hidden" name="organisation_guid" value="{{ org_id }}">
+                                    <button type="submit" style="background:none;border:none;color:var(--danger,#c00);cursor:pointer;font-size:0.8rem;padding:0 2px;line-height:1;" title="Remove">&times;</button>
+                                </form>
+                            </span>
+                        {% endfor %}
+                        {% if not u.organization_ids %}
+                            <span style="color:var(--danger,#c00);font-size:0.75rem;font-weight:600;">No org</span>
+                        {% endif %}
+                        <form method="post" action="/admin/assign-org" style="display:inline-flex;gap:2px;align-items:center;margin-top:2px;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
+                            <select name="organisation_guid" style="font-size:0.7rem;padding:1px 4px;max-width:120px;" required>
+                                <option value="">+ Org</option>
+                                {% for o in organisations %}
+                                    {% if o.organisation_guid not in u.organization_ids %}
+                                    <option value="{{ o.organisation_guid }}">{{ o.name }}</option>
+                                    {% endif %}
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-secondary" style="padding:1px 6px;font-size:0.7rem;">Add</button>
+                        </form>
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td>
+                    {% if u.user_type == 'professional' %}
+                        {# Ticket #46: direct grants — removable by SU. #}
+                        {% for p in u.direct_phases %}
+                            <span style="display:inline-flex;align-items:center;gap:2px;background:#d1fae5;color:#065f46;border-radius:4px;padding:1px 6px;font-size:0.75rem;margin:1px 0;" title="Direct grant">
+                                {{ p }}
+                                <form method="post" action="/admin/revoke-phase" style="display:inline;margin:0;"
+                                      onsubmit="return confirm('Revoke direct phase &quot;{{ p }}&quot; from {{ u.email }}? Group-derived access remains.');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
+                                    <input type="hidden" name="phase" value="{{ p }}">
+                                    <button type="submit" style="background:none;border:none;color:var(--danger,#c00);cursor:pointer;font-size:0.8rem;padding:0 2px;line-height:1;" title="Revoke direct">&times;</button>
+                                </form>
+                            </span>
+                        {% endfor %}
+                        {# Group-derived — advisory, not removable here. #}
+                        {% for gp in u.group_phases %}
+                            <span style="display:inline-block;background:#e0e7ff;color:#3730a3;border-radius:4px;padding:1px 6px;font-size:0.75rem;margin:1px 0;" title="Via group: {{ gp.group_name }}">
+                                {{ gp.phase }} <em style="font-size:0.65rem;opacity:0.7;">(grp)</em>
+                            </span>
+                        {% endfor %}
+                        {% if not u.direct_phases and not u.group_phases %}
+                            <span style="color:var(--muted,#6b7280);font-size:0.75rem;">—</span>
+                        {% endif %}
+                        <form method="post" action="/admin/grant-phase" style="display:inline-flex;gap:2px;align-items:center;margin-top:2px;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
+                            <select name="phase" style="font-size:0.7rem;padding:1px 4px;" required>
+                                <option value="">+ Phase</option>
+                                {% for pn in phase_names %}
+                                    {% if pn not in u.direct_phases %}
+                                    <option value="{{ pn }}">{{ pn }}</option>
+                                    {% endif %}
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-sm btn-secondary" style="padding:1px 6px;font-size:0.7rem;">Grant</button>
+                        </form>
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
                 <td>{% if u.is_su_admin %}<span class="badge badge-su">SU</span>{% endif %}</td>
                 <td>{{ u.created_at[:10] if u.created_at else '-' }}</td>
                 <td>
@@ -34,16 +126,34 @@
                     <form method="post" action="/admin/promote-su" style="display:inline;">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
-                        <input type="password" name="password" placeholder="Your password" style="width:120px;padding:2px 4px;font-size:0.8rem;" required>
+                        <input type="password" name="password" placeholder="Your password" style="width:100px;padding:2px 4px;font-size:0.75rem;" required>
                         <button type="submit" class="btn btn-sm btn-primary">Promote SU</button>
                     </form>
                     {% endif %}
                     {% if u.user_guid != current_user.guid %}
+                    {# Ticket #43: SU-triggered password reset. Generated temp
+                       password is flashed once after submit; the user is
+                       forced to change it on next login. #}
+                    <form method="post" action="/admin/reset-password" style="display:inline;"
+                          onsubmit="return confirm('Reset password for {{ u.email }}? A temp password will be shown once after submit.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
+                        <button type="submit" class="btn btn-sm btn-secondary">Reset pw</button>
+                    </form>
+                    {# Ticket #44: bulk session flush. Bumps the user's
+                       token_revocation_epoch so every outstanding JWT is
+                       rejected on next use. #}
+                    <form method="post" action="/admin/flush-sessions" style="display:inline;"
+                          onsubmit="return confirm('Flush all sessions for {{ u.email }}? They will be logged out of every device immediately.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
+                        <button type="submit" class="btn btn-sm btn-secondary">Flush</button>
+                    </form>
                     <form method="post" action="/admin/delete-user" style="display:inline;"
                           onsubmit="return confirm('Delete user {{ u.email }}?');">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="user_guid" value="{{ u.user_guid }}">
-                        <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                        <button type="submit" class="btn btn-sm btn-danger">Del</button>
                     </form>
                     {% endif %}
                 </td>
@@ -58,10 +168,32 @@
 <div class="card">
     <h3>Organisations</h3>
     <table>
-        <thead><tr><th>Name</th><th>GUID</th></tr></thead>
+        <thead><tr><th>Name</th><th>Users</th><th>Patients</th><th>Requests</th><th>Actions</th></tr></thead>
         <tbody>
         {% for o in organisations %}
-            <tr><td>{{ o.name }}</td><td style="font-size:0.8rem;">{{ o.organisation_guid }}</td></tr>
+            {# GUID kept as a tooltip on hover for SU debugging; not displayed inline. #}
+            <tr>
+                <td title="GUID: {{ o.organisation_guid }}">{{ o.name }}</td>
+                <td>{{ o.user_assignment_count }}</td>
+                <td>{{ o.patient_count }}</td>
+                <td>{{ o.access_request_count }}</td>
+                <td>
+                    {# Ticket #45: Delete organisation. Hard-blocked in the
+                       backend when patients still reference this org; the
+                       confirm surfaces the dependent counts up-front. #}
+                    {% if o.patient_count > 0 %}
+                        <button type="button" class="btn btn-sm btn-danger" disabled
+                                title="Cannot delete — {{ o.patient_count }} patient(s) still reference this org.">Delete</button>
+                    {% else %}
+                    <form method="post" action="/admin/delete-organisation" style="display:inline;"
+                          onsubmit="return confirm('Delete organisation &quot;{{ o.name }}&quot;?\n\n{{ o.user_assignment_count }} user assignment(s) and {{ o.access_request_count }} access request(s) will also be removed.');">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="organisation_guid" value="{{ o.organisation_guid }}">
+                        <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
         {% endfor %}
         </tbody>
     </table>
@@ -81,13 +213,21 @@
         <h3>Access Requests ({{ access_requests | length }})</h3>
         {% if access_requests %}
         <table>
-            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th title="Phases the user requested at registration. After #57 these are advisory — SU must grant them explicitly after approval.">Requested</th><th>Status</th><th>Actions</th></tr></thead>
             <tbody>
             {% for ar in access_requests %}
                 <tr>
                     <td>{{ ar.first_name }} {{ ar.last_name }}</td>
                     <td>{{ ar.email }}</td>
                     <td>{{ ar.professional_role }}</td>
+                    <td>
+                        {% for p in (ar.requested_phases or []) %}
+                            <span class="badge" style="background:#fef3c7;color:#92400e;margin-right:2px;"
+                                  title="Requested at registration. Grant explicitly via the Users table after approval (#57).">{{ p }}</span>
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endfor %}
+                    </td>
                     <td><span class="badge badge-{{ ar.status }}">{{ ar.status }}</span></td>
                     <td>
                         {% if ar.status in ('pending', 'endorsed') %}
@@ -97,7 +237,8 @@
                             {% if ar.status == 'pending' %}
                                 <button name="decision" value="endorsed" class="btn btn-sm btn-secondary">Endorse</button>
                             {% endif %}
-                            <button name="decision" value="approved" class="btn btn-sm btn-success">Approve</button>
+                            <button name="decision" value="approved" class="btn btn-sm btn-success"
+                                    title="Approves the user. Requested phases must be granted separately in the Users table (#57).">Approve</button>
                             <button name="decision" value="rejected" class="btn btn-sm btn-danger">Reject</button>
                         </form>
                         {% endif %}
@@ -116,12 +257,12 @@
         <h3>Group Proposals ({{ group_proposals | length }})</h3>
         {% if group_proposals %}
         <table>
-            <thead><tr><th>Name</th><th>Type</th><th>Actions</th></tr></thead>
+            <thead><tr><th>Name</th><th title="Category label only — does not grant phase access.">Category</th><th>Actions</th></tr></thead>
             <tbody>
             {% for p in group_proposals %}
                 <tr>
                     <td>{{ p.proposed_name }}</td>
-                    <td>{{ p.group_type }}</td>
+                    <td style="color:var(--muted);" title="Category label — does not grant phase access.">{{ p.category }}</td>
                     <td>
                         <form method="post" action="/admin/decide-group-proposal" style="display:inline;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -169,17 +310,43 @@
         {% endif %}
     </div>
 
-    <!-- Groups (with delete) -->
+    <!-- Groups — with available groups in scrollable side panel -->
     <div class="card">
         <h3>All Groups</h3>
+        <form method="post" action="/admin/create-group" class="mb-2" style="display:flex;gap:0.5rem;align-items:end;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group" style="flex:1;margin-bottom:0;">
+                <label for="group_name">New Group</label>
+                <input type="text" id="group_name" name="name" required placeholder="Group name">
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+                <label for="category" title="Category label only — does not grant phase access. Phases are granted per-user in the Users table.">Category</label>
+                <input type="text" id="category" name="category" required
+                       list="category-suggestions"
+                       placeholder="e.g. planning, request, analysis…"
+                       title="Free-form category label (#60). Suggestions cover the legacy four; SU can invent new ones.">
+                <datalist id="category-suggestions">
+                    <option value="planning">
+                    <option value="request">
+                    <option value="provider">
+                    <option value="analysis">
+                </datalist>
+            </div>
+            <button type="submit" class="btn btn-primary">Create</button>
+        </form>
+        <p class="text-muted" style="margin:0 0 0.5rem 0;font-size:0.85em;">
+            Category is a label only — group membership does <strong>not</strong> grant phase access (#57).
+            Phases are managed per-user in the Users table above.
+        </p>
         {% if groups %}
-        <table>
-            <thead><tr><th>Name</th><th>Type</th><th>Actions</th></tr></thead>
+        <div style="max-height:280px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
+        <table style="margin-bottom:0;">
+            <thead style="position:sticky;top:0;z-index:1;"><tr><th>Name</th><th title="Category label only — does not grant phase access.">Category</th><th>Actions</th></tr></thead>
             <tbody>
             {% for g in groups %}
                 <tr>
                     <td>{{ g.name }}</td>
-                    <td>{{ g.group_type }}</td>
+                    <td style="color:var(--muted);" title="Category label — does not grant phase access.">{{ g.category }}</td>
                     <td>
                         <form method="post" action="/admin/delete-group" style="display:inline;"
                               onsubmit="return confirm('Delete group {{ g.name }}?');">
@@ -192,6 +359,7 @@
             {% endfor %}
             </tbody>
         </table>
+        </div>
         {% else %}
         <p class="text-muted">No groups.</p>
         {% endif %}
@@ -217,16 +385,38 @@
     </table>
 </div>
 
-<!-- Oath Overview -->
+<!-- Oath Overview (Service Registry) with health indicators -->
 <div class="card">
-    <h3>Oath Overview (Service Registry)</h3>
+    <h3 style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+        Service Registry
+        <span id="health-status" style="font-size:0.7rem;font-weight:400;color:var(--text-muted,#6b7280);">checking...</span>
+        <button onclick="window._refreshHealth()" style="margin-left:auto;font-size:0.75rem;padding:3px 10px;border-radius:4px;border:1px solid var(--border,#d1d5db);background:var(--bg,#fff);color:var(--text,#374151);cursor:pointer;">Update availability</button>
+    </h3>
     {% if oath_overview %}
     <div style="overflow-x:auto;">
-    <table>
-        <thead><tr>{% for key in oath_overview[0].keys() %}<th>{{ key }}</th>{% endfor %}</tr></thead>
+    <table id="oath-table" style="font-size:0.85rem;">
+        <thead>
+            <tr>
+                <th>Service</th>
+                <th>URL</th>
+                <th style="text-align:center;">API</th>
+                <th style="text-align:center;">DB</th>
+                <th style="text-align:center;">Frontend</th>
+                <th>Privilege</th>
+                <th>Notes</th>
+            </tr>
+        </thead>
         <tbody>
         {% for row in oath_overview %}
-            <tr>{% for val in row.values() %}<td>{{ val }}</td>{% endfor %}</tr>
+            <tr>
+                <td style="white-space:nowrap;font-weight:600;">{{ row.get('service_name', '') }}</td>
+                <td><a href="{{ row.get('service_url', '#') }}" target="_blank" style="font-size:0.8rem;">{{ row.get('service_url', '') }}</a></td>
+                <td style="text-align:center;"><span class="health-dot" data-service="{{ row.get('service_name', '') }}" data-aspect="api" title="Checking..."></span></td>
+                <td style="text-align:center;"><span class="health-dot" data-service="{{ row.get('service_name', '') }}" data-aspect="db" title="Checking..."></span></td>
+                <td style="text-align:center;"><span class="health-dot" data-service="{{ row.get('service_name', '') }}" data-aspect="frontend" title="Checking..."></span></td>
+                <td>{{ row.get('privilege_level', '') }}</td>
+                <td style="font-size:0.8rem;">{{ row.get('notes', '') }}</td>
+            </tr>
         {% endfor %}
         </tbody>
     </table>
@@ -235,4 +425,87 @@
     <p class="text-muted">No services registered.</p>
     {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+<style>
+.health-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #adb5bd;
+    transition: background 0.3s, box-shadow 0.3s;
+}
+.health-dot.ok       { background: #16a34a; box-shadow: 0 0 6px rgba(22,163,74,0.5); }
+.health-dot.down     { background: #dc2626; box-shadow: 0 0 6px rgba(220,38,38,0.5); }
+.health-dot.timeout  { background: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,0.4); }
+.health-dot.error    { background: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,0.4); }
+.health-dot.unknown  { background: #adb5bd; }
+.health-dot.checking { background: #adb5bd; animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+</style>
+<script>
+(function () {
+    var STATUS_LABEL = {ok:'Healthy', down:'Down', timeout:'Timeout', error:'Error', unknown:'Unknown', checking:'Checking...'};
+    var intervalMs = 1800000; // default 30 min, updated from server response
+
+    function setDot(dot, status) {
+        dot.className = 'health-dot ' + status;
+        dot.title = STATUS_LABEL[status] || status;
+    }
+
+    function setAllChecking() {
+        document.querySelectorAll('.health-dot').forEach(function(d) { setDot(d, 'checking'); });
+    }
+
+    function applyResults(data) {
+        var services = data.services || [];
+        // Update interval from server config
+        if (data.interval_seconds) {
+            intervalMs = data.interval_seconds * 1000;
+        }
+        services.forEach(function(svc) {
+            ['api','db','frontend'].forEach(function(aspect) {
+                var dot = document.querySelector('.health-dot[data-service="'+svc.service_name+'"][data-aspect="'+aspect+'"]');
+                if (dot) {
+                    setDot(dot, svc[aspect] || 'unknown');
+                }
+            });
+        });
+        var ts = data.checked_at || new Date().toISOString();
+        var statusEl = document.getElementById('health-status');
+        if (statusEl) {
+            var nextMin = Math.round(intervalMs / 60000);
+            statusEl.textContent = 'last checked ' + ts.replace('T',' ').replace('Z',' UTC') + ' · next in ' + nextMin + ' min';
+        }
+    }
+
+    function fetchHealth() {
+        setAllChecking();
+        fetch('/api/service-health')
+            .then(function(r) { return r.json(); })
+            .then(applyResults)
+            .catch(function() {
+                document.querySelectorAll('.health-dot').forEach(function(d) { setDot(d, 'error'); });
+                var statusEl = document.getElementById('health-status');
+                if (statusEl) statusEl.textContent = 'health check failed';
+            });
+    }
+
+    function scheduleNext() {
+        setTimeout(function() {
+            fetchHealth();
+            scheduleNext();
+        }, intervalMs);
+    }
+
+    // Expose for manual refresh button
+    window._refreshHealth = fetchHealth;
+
+    // Initial check + start cycle
+    fetchHealth();
+    scheduleNext();
+})();
+</script>
 {% endblock %}

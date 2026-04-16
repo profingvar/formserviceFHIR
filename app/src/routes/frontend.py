@@ -26,6 +26,32 @@ frontend_bp = Blueprint('frontend', __name__, template_folder='../templates')
 # Context processor: inject current_user + is_group_admin into all templates
 # ---------------------------------------------------------------------------
 
+@frontend_bp.before_app_request
+def _force_password_change_gate():
+    """Ticket #43: block protected frontend paths until pending SU-reset is
+    resolved.
+
+    Allows: /login, /logout, /change-password, /static/*, /api/*, /fhir/*,
+    /docs/*. Everything else redirects to /change-password when the logged-in
+    user has force_change_on_next_login=True.
+    """
+    from flask import request as _req
+    path = _req.path
+    # Never touch API / FHIR / static / asset / auth paths.
+    if (path.startswith('/api/') or path.startswith('/fhir/')
+            or path.startswith('/static/') or path.startswith('/docs/')
+            or path in ('/change-password', '/login', '/logout', '/favicon.ico')):
+        return None
+    try:
+        user = _get_session_user()
+    except Exception:
+        return None
+    if user is not None and getattr(user, 'force_change_on_next_login', False):
+        flash('An administrator reset your password. Please choose a new one.', 'warning')
+        return redirect(url_for('frontend.change_password'))
+    return None
+
+
 @frontend_bp.app_context_processor
 def inject_user():
     """Make current_user and is_group_admin available in all templates.
@@ -266,7 +292,7 @@ def dashboard():
             if grp:
                 groups.append({
                     'group_name': grp.name,
-                    'group_type': grp.group_type,
+                    'category': grp.category,
                     'status': m.status,
                     'is_admin': m.is_admin,
                 })
@@ -300,11 +326,25 @@ def admin_page():
 
     from src.models.user import User
     from src.models.professional import Professional
+    from src.models.patient import Patient
     from src.models.organisation import Organisation
     from src.models.access_request import AccessRequest
     from src.models.group_proposal import GroupProposal
     from src.models.leader_request import LeaderRequest
     from src.models.group import Group
+
+    from src.models.user_organisation import UserOrganisation
+    from src.models.membership import Membership
+    # Ticket #46: direct phase grants. Wrapped in try/except because legacy
+    # envs may not have the user_phases table yet — admin page must still
+    # render; phases just show as empty.
+    try:
+        from src.models.user_phase import UserPhase, PHASE_NAMES
+        _user_phase_available = True
+    except Exception:
+        UserPhase = None
+        PHASE_NAMES = ('planning', 'request', 'provider', 'analysis')
+        _user_phase_available = False
 
     # Users
     all_users = db.query(User).all()
@@ -315,6 +355,9 @@ def admin_page():
             'is_su_admin': u.is_su_admin,
             'created_at': u.created_at.isoformat() if u.created_at else '',
             'first_name': '', 'last_name': '', 'professional_role': '',
+            'personnummer': '', 'organization_ids': [],
+            'direct_phases': [],       # list[str]
+            'group_phases': [],        # list[{'phase': str, 'group_name': str}]
         }
         if u.user_type == 'professional':
             prof = db.query(Professional).filter_by(user_id=u.id).first()
@@ -322,11 +365,48 @@ def admin_page():
                 entry['first_name'] = prof.first_name or ''
                 entry['last_name'] = prof.last_name or ''
                 entry['professional_role'] = prof.professional_role or ''
+            # Load org assignments
+            user_orgs = db.query(UserOrganisation).filter_by(user_guid=u.guid).all()
+            entry['organization_ids'] = [uo.organisation_guid for uo in user_orgs]
+
+            # Ticket #46: direct phase grants
+            if _user_phase_available:
+                try:
+                    direct = db.query(UserPhase).filter_by(user_guid=u.guid).all()
+                    entry['direct_phases'] = sorted({up.phase for up in direct})
+                except Exception:
+                    entry['direct_phases'] = []
+
+            # Group-derived phases (legacy display-only after #57; `category`
+            # is free-form after #60 so only legacy phase-shaped labels match).
+            memberships = db.query(Membership).filter_by(
+                user_guid=u.guid, status='approved').all()
+            for m in memberships:
+                grp = db.query(Group).filter_by(guid=m.group_guid).first()
+                if grp and grp.category in PHASE_NAMES:
+                    entry['group_phases'].append({
+                        'phase': grp.category,
+                        'group_name': grp.name,
+                    })
+        elif u.user_type == 'patient':
+            pat = db.query(Patient).filter_by(user_id=u.id).first()
+            if pat:
+                entry['personnummer'] = pat.personnummer or ''
         users.append(entry)
 
-    # Organisations
+    # Organisations — with dependent counts for the ticket #45 Delete modal.
     orgs = db.query(Organisation).all()
-    organisations = [{'organisation_guid': o.guid, 'name': o.name} for o in orgs]
+    organisations = []
+    for o in orgs:
+        organisations.append({
+            'organisation_guid': o.guid,
+            'name': o.name,
+            'patient_count': db.query(Patient).filter_by(organisation_guid=o.guid).count(),
+            'user_assignment_count': db.query(UserOrganisation).filter_by(
+                organisation_guid=o.guid).count(),
+            'access_request_count': db.query(AccessRequest).filter_by(
+                organisation_guid=o.guid).count(),
+        })
 
     # Access requests
     ar_list = db.query(AccessRequest).filter(
@@ -336,13 +416,15 @@ def admin_page():
         'access_request_guid': ar.guid, 'email': ar.email,
         'first_name': ar.first_name, 'last_name': ar.last_name,
         'professional_role': ar.professional_role, 'status': ar.status,
+        # #57: surface for SU review — advisory only, not auto-granted.
+        'requested_phases': list(ar.requested_phases or []),
     } for ar in ar_list]
 
     # Group proposals
     gp_list = db.query(GroupProposal).filter_by(status='pending').all()
     group_proposals = [{
         'proposal_guid': p.guid, 'proposed_name': p.proposed_name,
-        'group_type': p.group_type,
+        'category': p.category,
     } for p in gp_list]
 
     # Leader requests
@@ -354,7 +436,7 @@ def admin_page():
 
     # Groups
     all_groups = db.query(Group).all()
-    groups_list = [{'guid': g.guid, 'name': g.name, 'group_type': g.group_type} for g in all_groups]
+    groups_list = [{'guid': g.guid, 'name': g.name, 'category': g.category} for g in all_groups]
 
     # Oath overview
     oath_overview = []
@@ -368,7 +450,8 @@ def admin_page():
                            access_requests=access_requests,
                            group_proposals=group_proposals,
                            leader_requests=leader_requests,
-                           groups=groups_list, oath_overview=oath_overview)
+                           groups=groups_list, oath_overview=oath_overview,
+                           phase_names=list(PHASE_NAMES))
 
 
 # --- SU Admin form actions ---
@@ -440,6 +523,229 @@ def admin_delete_user():
     return redirect(url_for('frontend.admin_page'))
 
 
+@frontend_bp.route('/admin/reset-password', methods=['POST'])
+@_require_su_login
+def admin_reset_password():
+    """SU-triggered password reset. Generates temp password, flashes it once.
+
+    Ticket #43: temp password is shown in a success flash so the SU can copy
+    it and hand it to the user out-of-band. force_change_on_next_login is set
+    so the user must change it on next login.
+    """
+    from datetime import datetime, timezone
+    from src.routes.admin import _generate_temp_password
+
+    user = _get_session_user()
+    db = get_db()
+    target_guid = request.form.get('user_guid', '').strip()
+
+    from src.models.user import User
+    target = db.query(User).filter_by(guid=target_guid).first()
+    if target is None:
+        flash('User not found.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    temp_password = _generate_temp_password()
+    target.password_hash = hash_password(temp_password)
+    target.force_change_on_next_login = True
+    target.password_changed_at = datetime.now(timezone.utc)
+
+    audit('reset_password', user_guid=user.guid,
+          detail={'target_guid': target_guid, 'email': target.email,
+                  'generated': True},
+          ip=request.remote_addr)
+
+    # Plaintext password shown once in a flash — not persisted. The SU must
+    # copy it now; refreshing the page will lose it.
+    flash(f'Temp password for {target.email}: {temp_password} '
+          f'(copy now — not stored; user must change on next login)', 'success')
+    return redirect(url_for('frontend.admin_page'))
+
+
+@frontend_bp.route('/admin/delete-organisation', methods=['POST'])
+@_require_su_login
+def admin_delete_org():
+    """Ticket #45: SU deletes an organisation.
+
+    Hard-blocks on patient references (medical-data integrity). UI sends
+    the expected dependent counts in hidden inputs so the confirm already
+    listed them — we re-check on the server anyway (never trust the form).
+    """
+    user = _get_session_user()
+    db = get_db()
+    org_guid = request.form.get('organisation_guid', '').strip()
+
+    from src.models.organisation import Organisation
+    from src.models.patient import Patient
+    from src.models.user_organisation import UserOrganisation
+    from src.models.access_request import AccessRequest
+
+    org = db.query(Organisation).filter_by(guid=org_guid).first()
+    if org is None:
+        flash('Organisation not found.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    patient_count = db.query(Patient).filter_by(organisation_guid=org_guid).count()
+    if patient_count > 0:
+        flash(f'Cannot delete "{org.name}" — {patient_count} patient(s) still '
+              f'reference this organisation. Reassign or remove them first.',
+              'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    org_name = org.name
+    uo_deleted = db.query(UserOrganisation).filter_by(
+        organisation_guid=org_guid).delete(synchronize_session='fetch')
+    ar_deleted = db.query(AccessRequest).filter_by(
+        organisation_guid=org_guid).delete(synchronize_session='fetch')
+    db.delete(org)
+
+    audit('delete_organisation', user_guid=user.guid,
+          detail={'org_guid': org_guid, 'name': org_name,
+                  'user_assignments_removed': uo_deleted,
+                  'access_requests_removed': ar_deleted},
+          ip=request.remote_addr)
+
+    flash(f'Organisation "{org_name}" deleted '
+          f'({uo_deleted} user assignment(s), {ar_deleted} access request(s) removed).',
+          'success')
+    return redirect(url_for('frontend.admin_page'))
+
+
+@frontend_bp.route('/admin/grant-phase', methods=['POST'])
+@_require_su_login
+def admin_grant_phase():
+    """Ticket #46: SU grants a direct phase to a user (independent of groups)."""
+    user = _get_session_user()
+    db = get_db()
+    target_guid = request.form.get('user_guid', '').strip()
+    phase = request.form.get('phase', '').strip()
+
+    from src.models.user import User
+    from src.models.user_phase import UserPhase, PHASE_NAMES
+
+    if phase not in PHASE_NAMES:
+        flash(f'Phase must be one of {", ".join(PHASE_NAMES)}.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    target = db.query(User).filter_by(guid=target_guid).first()
+    if target is None:
+        flash('User not found.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    existing = db.query(UserPhase).filter_by(
+        user_guid=target_guid, phase=phase).first()
+    if existing:
+        flash(f'{target.email} already has direct phase "{phase}".', 'warning')
+        return redirect(url_for('frontend.admin_page'))
+
+    up = UserPhase(user_guid=target_guid, phase=phase,
+                   granted_by_guid=user.guid)
+    db.add(up)
+
+    audit('grant_user_phase', user_guid=user.guid,
+          detail={'target_guid': target_guid, 'phase': phase},
+          ip=request.remote_addr)
+
+    flash(f'Granted direct phase "{phase}" to {target.email}.', 'success')
+    return redirect(url_for('frontend.admin_page'))
+
+
+@frontend_bp.route('/admin/revoke-phase', methods=['POST'])
+@_require_su_login
+def admin_revoke_phase():
+    """Ticket #46: SU revokes a direct phase grant.
+
+    Leaves implicit (group-derived) access intact. A warning flash surfaces
+    when the user still has the phase via a group membership, so the SU
+    understands the revoke didn't actually cut access.
+    """
+    user = _get_session_user()
+    db = get_db()
+    target_guid = request.form.get('user_guid', '').strip()
+    phase = request.form.get('phase', '').strip()
+
+    from src.models.user import User
+    from src.models.user_phase import UserPhase, PHASE_NAMES
+    from src.models.membership import Membership
+    from src.models.group import Group
+
+    if phase not in PHASE_NAMES:
+        flash(f'Phase must be one of {", ".join(PHASE_NAMES)}.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    target = db.query(User).filter_by(guid=target_guid).first()
+    up = db.query(UserPhase).filter_by(
+        user_guid=target_guid, phase=phase).first()
+    if up is None:
+        flash(f'No direct grant of phase "{phase}" to remove.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    db.delete(up)
+
+    # Diagnostic-only after #57: group membership no longer grants phases,
+    # but if the user is in a group whose (free-form) category happens to
+    # match the phase name, surface that in the audit log and the UI.
+    still_implicit = False
+    for m in db.query(Membership).filter_by(
+            user_guid=target_guid, status='approved').all():
+        grp = db.query(Group).filter_by(guid=m.group_guid).first()
+        if grp and grp.category == phase:
+            still_implicit = True
+            break
+
+    audit('revoke_user_phase', user_guid=user.guid,
+          detail={'target_guid': target_guid, 'phase': phase,
+                  'still_implicit_via_group': still_implicit},
+          ip=request.remote_addr)
+
+    if still_implicit:
+        flash(f'Direct "{phase}" revoked from {target.email if target else target_guid}, '
+              f'but they still have it via a group membership.',
+              'warning')
+    else:
+        flash(f'Revoked phase "{phase}" from {target.email if target else target_guid}.',
+              'success')
+    return redirect(url_for('frontend.admin_page'))
+
+
+@frontend_bp.route('/admin/flush-sessions', methods=['POST'])
+@_require_su_login
+def admin_flush_sessions():
+    """Ticket #44: bulk session flush by bumping token_revocation_epoch.
+
+    Immediately invalidates every outstanding JWT for the target user — next
+    request from any existing session will be rejected and they'll have to
+    log in again. SU cannot flush themselves (avoids locking ourselves out
+    mid-session).
+    """
+    from datetime import datetime, timezone
+
+    user = _get_session_user()
+    db = get_db()
+    target_guid = request.form.get('user_guid', '').strip()
+
+    from src.models.user import User
+    target = db.query(User).filter_by(guid=target_guid).first()
+    if target is None:
+        flash('User not found.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+    if target.guid == user.guid:
+        flash('Refusing to flush your own sessions (that would log you out).', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    new_epoch = datetime.now(timezone.utc)
+    target.token_revocation_epoch = new_epoch
+
+    audit('flush_sessions', user_guid=user.guid,
+          detail={'target_guid': target_guid, 'email': target.email,
+                  'epoch': new_epoch.isoformat()},
+          ip=request.remote_addr)
+
+    flash(f'All sessions flushed for {target.email}. '
+          f'They will need to log in again.', 'success')
+    return redirect(url_for('frontend.admin_page'))
+
+
 @frontend_bp.route('/admin/create-organisation', methods=['POST'])
 @_require_su_login
 def admin_create_org():
@@ -465,6 +771,108 @@ def admin_create_org():
     return redirect(url_for('frontend.admin_page'))
 
 
+@frontend_bp.route('/admin/assign-org', methods=['POST'])
+@_require_su_login
+def admin_assign_org():
+    user = _get_session_user()
+    db = get_db()
+    user_guid = request.form.get('user_guid', '').strip()
+    org_guid = request.form.get('organisation_guid', '').strip()
+
+    if not user_guid or not org_guid:
+        flash('User and organisation required.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    from src.models.user import User
+    from src.models.organisation import Organisation
+    from src.models.user_organisation import UserOrganisation
+
+    target = db.query(User).filter_by(guid=user_guid).first()
+    org = db.query(Organisation).filter_by(guid=org_guid).first()
+    if not target or not org:
+        flash('User or organisation not found.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    if target.user_type != 'professional':
+        flash('Only professionals can be assigned to organisations.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    existing = db.query(UserOrganisation).filter_by(
+        user_guid=user_guid, organisation_guid=org_guid
+    ).first()
+    if existing:
+        flash('User already assigned to this organisation.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    uo = UserOrganisation(user_guid=user_guid, organisation_guid=org_guid)
+    db.add(uo)
+    audit('assign_user_organisation', user_guid=user.guid,
+          detail={'target_guid': user_guid, 'org_guid': org_guid, 'org_name': org.name},
+          ip=request.remote_addr)
+    flash(f'Assigned {target.email} to {org.name}.', 'success')
+    return redirect(url_for('frontend.admin_page'))
+
+
+@frontend_bp.route('/admin/remove-org', methods=['POST'])
+@_require_su_login
+def admin_remove_org():
+    user = _get_session_user()
+    db = get_db()
+    user_guid = request.form.get('user_guid', '').strip()
+    org_guid = request.form.get('organisation_guid', '').strip()
+
+    if not user_guid or not org_guid:
+        flash('User and organisation required.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    from src.models.user_organisation import UserOrganisation
+
+    uo = db.query(UserOrganisation).filter_by(
+        user_guid=user_guid, organisation_guid=org_guid
+    ).first()
+    if not uo:
+        flash('Assignment not found.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    db.delete(uo)
+    audit('remove_user_organisation', user_guid=user.guid,
+          detail={'target_guid': user_guid, 'org_guid': org_guid},
+          ip=request.remote_addr)
+    flash('Organisation assignment removed.', 'success')
+    return redirect(url_for('frontend.admin_page'))
+
+
+@frontend_bp.route('/admin/create-group', methods=['POST'])
+@_require_su_login
+def admin_create_group():
+    user = _get_session_user()
+    db = get_db()
+    name = request.form.get('name', '').strip()
+    # #60: category is a free-form varchar — accept legacy `group_type`
+    # param name as a fallback so older clients/templates still work while
+    # the form rollouts propagate.
+    category = (request.form.get('category') or
+                request.form.get('group_type') or '').strip()
+
+    if not name or not category:
+        flash('Group name and category required.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    from src.models.group import Group
+    if db.query(Group).filter_by(name=name).first():
+        flash('Group name already exists.', 'error')
+        return redirect(url_for('frontend.admin_page'))
+
+    grp = Group(name=name, category=category)
+    db.add(grp)
+    db.flush()
+    audit('create_group', user_guid=user.guid,
+          detail={'group_guid': grp.guid, 'name': name, 'category': category},
+          ip=request.remote_addr)
+    flash(f'Group "{name}" ({category}) created.', 'success')
+    return redirect(url_for('frontend.admin_page'))
+
+
 @frontend_bp.route('/admin/decide-access-request', methods=['POST'])
 @_require_su_login
 def admin_decide_access_request():
@@ -487,11 +895,13 @@ def admin_decide_access_request():
     ar.decided_by_guid = user.guid
 
     if decision == 'approved':
+        # #57: groups and phases are independent criteria. Approval
+        # creates the user + professional + organisation link. The SU
+        # grants phases and group memberships separately afterwards —
+        # `ar.requested_phases` is now advisory metadata only.
         from src.models.user import User
         from src.models.professional import Professional
         from src.models.user_organisation import UserOrganisation
-        from src.models.membership import Membership
-        from src.models.group import Group
 
         new_user = User(email=ar.email, password_hash=ar.password_hash,
                         user_type='professional', is_su_admin=False)
@@ -502,17 +912,23 @@ def admin_decide_access_request():
         db.add(prof)
         uo = UserOrganisation(user_guid=new_user.guid, organisation_guid=ar.organisation_guid)
         db.add(uo)
-        for phase in (ar.requested_phases or []):
-            groups = db.query(Group).filter_by(group_type=phase).all()
-            for grp in groups:
-                db.add(Membership(user_guid=new_user.guid, group_guid=grp.guid,
-                                  status='approved', is_admin=False, decided_by_guid=user.guid))
         db.flush()
 
     audit('access_request_decide', user_guid=user.guid,
-          detail={'access_request_guid': ar_guid, 'decision': decision},
+          detail={'access_request_guid': ar_guid, 'decision': decision,
+                  # #57: surfaced for audit; SU must grant these explicitly.
+                  'requested_phases_pending_su_grant':
+                      list(ar.requested_phases or [])},
           ip=request.remote_addr)
-    flash(f'Access request {decision}.', 'success')
+    if decision == 'approved' and (ar.requested_phases or []):
+        phases = ', '.join(ar.requested_phases)
+        flash(
+            f'Access request approved. User requested phases [{phases}] — '
+            'grant explicitly via the Users table when ready.',
+            'success',
+        )
+    else:
+        flash(f'Access request {decision}.', 'success')
     return redirect(url_for('frontend.admin_page'))
 
 
@@ -534,7 +950,7 @@ def admin_decide_group_proposal():
     proposal.decided_by_guid = user.guid
     if decision == 'approved':
         from src.models.group import Group
-        grp = Group(name=proposal.proposed_name, group_type=proposal.group_type)
+        grp = Group(name=proposal.proposed_name, category=proposal.category)
         db.add(grp)
         db.flush()
 
@@ -698,8 +1114,83 @@ def group_admin_page():
         if grp:
             admin_groups.append({'group_guid': grp.guid, 'group_name': grp.name})
 
+    # Ticket #47: per-group member rosters with orgs + phases so SU can edit
+    # all three criteria from one place. Non-SU group admins see the same
+    # roster but read-only (the template hides the edit controls).
+    from src.models.user_organisation import UserOrganisation
+    from src.models.organisation import Organisation
+    try:
+        from src.models.user_phase import UserPhase, PHASE_NAMES
+        _up_ok = True
+    except Exception:
+        UserPhase = None
+        PHASE_NAMES = ('planning', 'request', 'provider', 'analysis')
+        _up_ok = False
+
+    # Global org list for the "+ Org" dropdown.
+    all_orgs = db.query(Organisation).all()
+    all_organisations = [{'organisation_guid': o.guid, 'name': o.name}
+                         for o in all_orgs]
+    org_name_by_guid = {o.guid: o.name for o in all_orgs}
+
+    member_groups = []
+    for guid in admin_group_guids:
+        grp = db.query(Group).filter_by(guid=guid).first()
+        if not grp:
+            continue
+        approved_ms = db.query(Membership).filter_by(
+            group_guid=guid, status='approved').all()
+        members = []
+        for m in approved_ms:
+            mu = db.query(User).filter_by(guid=m.user_guid).first()
+            if not mu:
+                continue
+            entry = {
+                'user_guid': mu.guid,
+                'email': mu.email,
+                'is_group_admin': m.is_admin,
+                'organization_ids': [],
+                'org_labels': [],   # list[{guid,name}] for render
+                'direct_phases': [],
+                'group_phases': [],
+            }
+            user_orgs = db.query(UserOrganisation).filter_by(
+                user_guid=mu.guid).all()
+            entry['organization_ids'] = [uo.organisation_guid for uo in user_orgs]
+            entry['org_labels'] = [
+                {'guid': uo.organisation_guid,
+                 'name': org_name_by_guid.get(uo.organisation_guid, uo.organisation_guid[:8])}
+                for uo in user_orgs
+            ]
+            if _up_ok:
+                try:
+                    direct = db.query(UserPhase).filter_by(
+                        user_guid=mu.guid).all()
+                    entry['direct_phases'] = sorted({up.phase for up in direct})
+                except Exception:
+                    entry['direct_phases'] = []
+            mem_other = db.query(Membership).filter_by(
+                user_guid=mu.guid, status='approved').all()
+            for mm in mem_other:
+                og = db.query(Group).filter_by(guid=mm.group_guid).first()
+                if og and og.category in PHASE_NAMES:
+                    entry['group_phases'].append({
+                        'phase': og.category,
+                        'group_name': og.name,
+                    })
+            members.append(entry)
+        member_groups.append({
+            'group_guid': grp.guid,
+            'group_name': grp.name,
+            'category': grp.category,
+            'members': members,
+        })
+
     return render_template('group_admin.html', pending=pending,
-                           admin_groups=admin_groups, invite_result=None)
+                           admin_groups=admin_groups, invite_result=None,
+                           member_groups=member_groups,
+                           all_organisations=all_organisations,
+                           phase_names=list(PHASE_NAMES))
 
 
 @frontend_bp.route('/group-admin/decide', methods=['POST'])
@@ -770,6 +1261,154 @@ def group_admin_invite():
           ip=request.remote_addr)
 
     flash(f'Invite created for "{grp.name}". Token: {invite_token} (expires in {hours_valid}h)', 'success')
+    return redirect(url_for('frontend.group_admin_page'))
+
+
+# --- Ticket #47: org + phase editing from /group-admin (SU-only) -------------
+# Mirrors the /admin/{assign,remove}-org + /admin/{grant,revoke}-phase logic
+# but redirects back to /group-admin so SUs can manage all three access
+# criteria (groups / orgs / phases) without leaving this page.
+
+@frontend_bp.route('/group-admin/assign-org', methods=['POST'])
+@_require_su_login
+def group_admin_assign_org():
+    user = _get_session_user()
+    db = get_db()
+    user_guid = request.form.get('user_guid', '').strip()
+    org_guid = request.form.get('organisation_guid', '').strip()
+
+    from src.models.user import User
+    from src.models.organisation import Organisation
+    from src.models.user_organisation import UserOrganisation
+
+    target = db.query(User).filter_by(guid=user_guid).first()
+    org = db.query(Organisation).filter_by(guid=org_guid).first()
+    if not target or not org:
+        flash('User or organisation not found.', 'error')
+        return redirect(url_for('frontend.group_admin_page'))
+    if target.user_type != 'professional':
+        flash('Only professionals can be assigned to organisations.', 'error')
+        return redirect(url_for('frontend.group_admin_page'))
+
+    existing = db.query(UserOrganisation).filter_by(
+        user_guid=user_guid, organisation_guid=org_guid).first()
+    if existing:
+        flash(f'{target.email} already assigned to {org.name}.', 'warning')
+        return redirect(url_for('frontend.group_admin_page'))
+
+    db.add(UserOrganisation(user_guid=user_guid, organisation_guid=org_guid))
+    audit('assign_user_organisation', user_guid=user.guid,
+          detail={'target_guid': user_guid, 'org_guid': org_guid,
+                  'org_name': org.name, 'from': 'group-admin'},
+          ip=request.remote_addr)
+    flash(f'Assigned {target.email} to {org.name}.', 'success')
+    return redirect(url_for('frontend.group_admin_page'))
+
+
+@frontend_bp.route('/group-admin/remove-org', methods=['POST'])
+@_require_su_login
+def group_admin_remove_org():
+    user = _get_session_user()
+    db = get_db()
+    user_guid = request.form.get('user_guid', '').strip()
+    org_guid = request.form.get('organisation_guid', '').strip()
+
+    from src.models.user_organisation import UserOrganisation
+    uo = db.query(UserOrganisation).filter_by(
+        user_guid=user_guid, organisation_guid=org_guid).first()
+    if not uo:
+        flash('Assignment not found.', 'error')
+        return redirect(url_for('frontend.group_admin_page'))
+
+    db.delete(uo)
+    audit('remove_user_organisation', user_guid=user.guid,
+          detail={'target_guid': user_guid, 'org_guid': org_guid,
+                  'from': 'group-admin'},
+          ip=request.remote_addr)
+    flash('Organisation assignment removed.', 'success')
+    return redirect(url_for('frontend.group_admin_page'))
+
+
+@frontend_bp.route('/group-admin/grant-phase', methods=['POST'])
+@_require_su_login
+def group_admin_grant_phase():
+    user = _get_session_user()
+    db = get_db()
+    target_guid = request.form.get('user_guid', '').strip()
+    phase = request.form.get('phase', '').strip()
+
+    from src.models.user import User
+    from src.models.user_phase import UserPhase, PHASE_NAMES
+
+    if phase not in PHASE_NAMES:
+        flash(f'Phase must be one of {", ".join(PHASE_NAMES)}.', 'error')
+        return redirect(url_for('frontend.group_admin_page'))
+
+    target = db.query(User).filter_by(guid=target_guid).first()
+    if target is None:
+        flash('User not found.', 'error')
+        return redirect(url_for('frontend.group_admin_page'))
+
+    if db.query(UserPhase).filter_by(user_guid=target_guid, phase=phase).first():
+        flash(f'{target.email} already has direct phase "{phase}".', 'warning')
+        return redirect(url_for('frontend.group_admin_page'))
+
+    db.add(UserPhase(user_guid=target_guid, phase=phase,
+                     granted_by_guid=user.guid))
+    audit('grant_user_phase', user_guid=user.guid,
+          detail={'target_guid': target_guid, 'phase': phase,
+                  'from': 'group-admin'},
+          ip=request.remote_addr)
+    flash(f'Granted direct phase "{phase}" to {target.email}.', 'success')
+    return redirect(url_for('frontend.group_admin_page'))
+
+
+@frontend_bp.route('/group-admin/revoke-phase', methods=['POST'])
+@_require_su_login
+def group_admin_revoke_phase():
+    user = _get_session_user()
+    db = get_db()
+    target_guid = request.form.get('user_guid', '').strip()
+    phase = request.form.get('phase', '').strip()
+
+    from src.models.user import User
+    from src.models.user_phase import UserPhase, PHASE_NAMES
+    from src.models.membership import Membership
+    from src.models.group import Group
+
+    if phase not in PHASE_NAMES:
+        flash(f'Phase must be one of {", ".join(PHASE_NAMES)}.', 'error')
+        return redirect(url_for('frontend.group_admin_page'))
+
+    target = db.query(User).filter_by(guid=target_guid).first()
+    up = db.query(UserPhase).filter_by(
+        user_guid=target_guid, phase=phase).first()
+    if up is None:
+        flash(f'No direct grant of phase "{phase}" to remove.', 'error')
+        return redirect(url_for('frontend.group_admin_page'))
+
+    db.delete(up)
+
+    still_implicit = False
+    for m in db.query(Membership).filter_by(
+            user_guid=target_guid, status='approved').all():
+        grp = db.query(Group).filter_by(guid=m.group_guid).first()
+        if grp and grp.category == phase:
+            still_implicit = True
+            break
+
+    audit('revoke_user_phase', user_guid=user.guid,
+          detail={'target_guid': target_guid, 'phase': phase,
+                  'still_implicit_via_group': still_implicit,
+                  'from': 'group-admin'},
+          ip=request.remote_addr)
+
+    if still_implicit:
+        flash(f'Direct "{phase}" revoked from {target.email if target else target_guid}, '
+              f'but they still have it via a group membership.', 'warning')
+    else:
+        flash(f'Revoked phase "{phase}" from '
+              f'{target.email if target else target_guid}.', 'success')
     return redirect(url_for('frontend.group_admin_page'))
 
 
@@ -888,7 +1527,7 @@ def request_join():
     db = get_db()
     from src.models.group import Group
     all_groups = db.query(Group).all()
-    available_groups = [{'group_guid': g.guid, 'name': g.name, 'group_type': g.group_type}
+    available_groups = [{'group_guid': g.guid, 'name': g.name, 'category': g.category}
                         for g in all_groups]
 
     if request.method == 'POST':
@@ -930,22 +1569,25 @@ def suggest_group():
         user = _get_session_user()
         db = get_db()
         proposed_name = request.form.get('proposed_name', '').strip()
-        group_type = request.form.get('group_type', '').strip()
+        # #60: free-form category; accept legacy `group_type` form field
+        # as a fallback while templates roll forward.
+        category = (request.form.get('category') or
+                    request.form.get('group_type') or '').strip()
 
-        if not proposed_name or group_type not in ('planning', 'request', 'provider', 'analysis'):
-            flash('Group name and valid type required.', 'error')
+        if not proposed_name or not category:
+            flash('Group name and category required.', 'error')
             return render_template('suggest_group.html')
 
         from src.models.group_proposal import GroupProposal
         proposal = GroupProposal(
-            proposed_name=proposed_name, group_type=group_type,
+            proposed_name=proposed_name, category=category,
             requested_by_guid=user.guid, status='pending',
         )
         db.add(proposal)
         db.flush()
 
         audit('group_proposal_submit', user_guid=user.guid,
-              detail={'proposed_name': proposed_name, 'group_type': group_type},
+              detail={'proposed_name': proposed_name, 'category': category},
               ip=request.remote_addr)
         flash('Group proposal submitted for admin review.', 'success')
         return redirect(url_for('frontend.dashboard'))
@@ -1075,7 +1717,11 @@ def change_password():
             flash('Current password is incorrect.', 'error')
             return render_template('change_password.html')
 
+        from datetime import datetime, timezone
         user.password_hash = hash_password(new_pw)
+        # Ticket #43: clear SU-set force-change flag on self-service change.
+        user.force_change_on_next_login = False
+        user.password_changed_at = datetime.now(timezone.utc)
         audit('change_password_success', user_guid=user.guid, ip=request.remote_addr)
         flash('Password changed successfully.', 'success')
         return redirect(url_for('frontend.dashboard'))

@@ -117,6 +117,7 @@ Returns the access blob for the authenticated user.
   "email": "doctor@hospital.se",
   "user_type": "professional",
   "is_su_admin": false,
+  "must_change_password": false,
   "professional_guid": "...",
   "professional_role": "doctor",
   "fhir_resource_type": "Practitioner",
@@ -125,7 +126,7 @@ Returns the access blob for the authenticated user.
     {
       "group_guid": "...",
       "group_name": "Oncology Planning",
-      "group_type": "planning",
+      "category": "planning",
       "status": "approved",
       "is_admin": false
     }
@@ -141,6 +142,7 @@ Returns the access blob for the authenticated user.
   "email": "patient@example.com",
   "user_type": "patient",
   "is_su_admin": false,
+  "must_change_password": false,
   "patient_guid": "...",
   "organisation_guid": "...",
   "in_registry": true,
@@ -149,7 +151,18 @@ Returns the access blob for the authenticated user.
 }
 ```
 
-**Errors:** `401` — missing/invalid/expired/revoked token
+**Blob fields (both user types):**
+
+| Field | Type | Added | Meaning |
+|-------|------|-------|---------|
+| `must_change_password` | bool | #43 | SU triggered a password reset. Callers MUST block normal actions and route the user to the `/change-password` page until this flips back to `false`. |
+| `effective_phases` | list[str] | #46/#57 | Direct `UserPhase` grants **only**. Groups are orthogonal organisational/category metadata and do NOT contribute to phase access (#57). `'planning' in effective_phases` remains the canonical phase check — same field, narrower source. |
+
+**Errors:**
+
+| Code | Error | Description |
+|------|-------|-------------|
+| 401 | — | Missing/invalid/expired/revoked token, **or** token was issued before the user's `token_revocation_epoch` (#44 bulk session flush). Callers MUST treat this as "re-login required" and clear any cached blob. |
 
 ---
 
@@ -157,13 +170,16 @@ Returns the access blob for the authenticated user.
 
 **Auth:** Bearer token + `X-SSO-Client-Id` + `X-SSO-Client-Secret`
 
-Same as `/me` but requires service-to-service credentials. Used by downstream services to validate tokens on behalf of users.
+Same response shape as `/me` (including `must_change_password`, `effective_phases`, etc. — see the table above). Used by downstream services to validate the user's bearer on every protected request.
+
+!!! warning "Per-request validation, no caching"
+    Downstream services MUST call this endpoint on every protected request and trust only the returned blob for authorisation decisions. Caching the blob defeats `must_change_password` (#43) and the per-user session flush (#44). See `subservice-onboarding.md` F5/F6.
 
 **Errors:**
 
 | Code | Error | Description |
 |------|-------|-------------|
-| 401 | Unauthorized | Missing or invalid Bearer token |
+| 401 | — | Missing/invalid/expired/revoked token, **or** token was issued before the user's `token_revocation_epoch` (#44). Services must treat 401 here as "session terminated" — wipe their local session and bounce the user back through the SSO login flow. |
 | 403 | `invalid_service_credentials` | Missing or wrong client ID/secret |
 
 ---
@@ -203,6 +219,8 @@ Change the authenticated user's password.
   "message": "Password changed successfully"
 }
 ```
+
+On success the server also clears `force_change_on_next_login` on the user, so the next `/me`/`/me/service` call will return `must_change_password: false` and downstream services will unblock the user automatically (#43). The `token_revocation_epoch` is **not** bumped — the existing JWT remains valid.
 
 **Errors:**
 
@@ -294,7 +312,7 @@ List the authenticated professional's approved group memberships.
     "resourceType": "Group",
     "group_guid": "...",
     "name": "Oncology Planning",
-    "group_type": "planning",
+    "category": "planning",
     "is_admin": false,
     "membership_status": "approved"
   }
@@ -514,6 +532,120 @@ Set a user as admin of a group (user must already be a member).
   "group_guid": "..."
 }
 ```
+
+---
+
+### `POST /api/admin/users/<user_guid>/reset-password` *(#43)*
+
+Force a password reset for `<user_guid>`. Sets the user's password to a temporary value and flips `force_change_on_next_login = True`, so the next `/me`/`/me/service` call returns `must_change_password: true` and downstream services must redirect the user to the `/change-password` page. The flag clears automatically the next time the user successfully completes `POST /api/auth/change-password`.
+
+**Request:**
+```json
+{
+  "temporary_password": "TempPass!23"
+}
+```
+
+If `temporary_password` is omitted the server generates one and returns it in the response so the SU can communicate it to the user out-of-band.
+
+**Response** `200 OK`:
+```json
+{
+  "user_guid": "...",
+  "message": "Password reset; user must change on next login",
+  "temporary_password": "TempPass!23"
+}
+```
+
+!!! note "Existing tokens remain valid"
+    This endpoint does **not** bump `token_revocation_epoch`. The user's existing JWTs stay valid — they just hit a forced redirect to `/change-password` on every request until they set a new password. Use `flush-sessions` below if you want to also invalidate every active token.
+
+**Errors:** `404` user not found, `400` temporary password < 8 chars
+
+---
+
+### `POST /api/admin/users/<user_guid>/flush-sessions` *(#44)*
+
+Invalidate every active JWT for `<user_guid>` in one call. Sets `user.token_revocation_epoch = now()`; `/me/service` will subsequently return **401** for any token whose `iat` is older than the stored epoch. Downstream services must treat that 401 as "session terminated" — wipe local session, bounce the user through the SSO login flow.
+
+**Request:** *(empty body)*
+
+**Response** `200 OK`:
+```json
+{
+  "user_guid": "...",
+  "token_revocation_epoch": "2026-04-15T08:30:00+00:00",
+  "message": "All active sessions invalidated"
+}
+```
+
+Cheaper than adding N `jti` entries to the revocation list when a user has many active devices, and correct when the set of active `jti`s isn't known (e.g. after a password compromise).
+
+**Errors:** `404` user not found
+
+---
+
+### `GET /api/admin/users/<user_guid>/phases` *(#46, clarified by #57)*
+
+List the direct `UserPhase` grants for `<user_guid>`. After #57 these grants are the **sole** source of `effective_phases` in the access blob — group memberships are orthogonal metadata and do not contribute to phase access.
+
+**Response** `200 OK`:
+```json
+{
+  "user_guid": "...",
+  "direct_phases": ["analysis"],
+  "effective_phases": ["analysis"]
+}
+```
+
+The `group_derived_phases` field was dropped in #57. For historical inspection of which phases a user would previously have held via group membership, run `scripts/phases_migration_report.py`.
+
+---
+
+### `POST /api/admin/users/<user_guid>/phases` *(#46)*
+
+Grant a direct phase to a user without requiring group membership. Useful for analysts who need `analysis` access without joining every planning group.
+
+**Request:**
+```json
+{
+  "phase": "analysis"
+}
+```
+
+`phase` must be one of `planning`, `request`, `provider`, `analysis`.
+
+**Response** `201 Created`:
+```json
+{
+  "user_guid": "...",
+  "phase": "analysis",
+  "granted_at": "2026-04-15T08:30:00+00:00",
+  "effective_phases": ["analysis"]
+}
+```
+
+Idempotent: granting an already-held phase returns `200 OK` with the existing record.
+
+**Errors:** `400` invalid phase name, `404` user not found, `409` user is a patient (phases are professional-only)
+
+---
+
+### `DELETE /api/admin/users/<user_guid>/phases/<phase>` *(#46, clarified by #57)*
+
+Revoke a direct `UserPhase` grant. Since #57 this is the only mechanism that removes `<phase>` from `effective_phases` — group memberships no longer contribute to the set, so there is no second source to also clear. Group cleanup, if desired, is a separate SU action.
+
+**Response** `200 OK`:
+```json
+{
+  "user_guid": "...",
+  "phase": "analysis",
+  "revoked": true,
+  "effective_phases": []
+}
+```
+
+**Errors:** `404` user has no direct grant for this phase
 
 ---
 

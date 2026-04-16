@@ -11,7 +11,7 @@
                 <select id="group_guid" name="group_guid" required>
                     <option value="">Select group...</option>
                     {% for g in available_groups %}
-                        <option value="{{ g.group_guid }}">{{ g.name }} ({{ g.group_type }})</option>
+                        <option value="{{ g.group_guid }}">{{ g.name }} ({{ g.category }})</option>
                     {% endfor %}
                 </select>
             </div>

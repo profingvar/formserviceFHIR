@@ -12,14 +12,17 @@
                 <input type="text" id="proposed_name" name="proposed_name" required>
             </div>
             <div class="form-group">
-                <label for="group_type">Group Type</label>
-                <select id="group_type" name="group_type" required>
-                    <option value="">Select type...</option>
-                    <option value="planning">Planning</option>
-                    <option value="request">Request</option>
-                    <option value="provider">Provider</option>
-                    <option value="analysis">Analysis</option>
-                </select>
+                <label for="category">Category</label>
+                <input type="text" id="category" name="category" required
+                       list="category-suggestions"
+                       placeholder="e.g. planning, request, analysis…">
+                <datalist id="category-suggestions">
+                    <option value="planning">
+                    <option value="request">
+                    <option value="provider">
+                    <option value="analysis">
+                </datalist>
+                <small class="text-muted">Free-form label (#60). Does not grant phase access.</small>
             </div>
             <button type="submit" class="btn btn-primary" style="width:100%;">Submit Proposal</button>
         </form>

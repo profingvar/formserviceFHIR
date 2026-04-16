@@ -131,7 +131,7 @@ def sso_callback(token, state):
 All authorization decisions must be based on the access blob. The subservice must **never**:
 
 - Maintain its own user/password database
-- Cache the access blob beyond the current session
+- **Cache the access blob across requests** — re-validate every protected request by calling `GET /api/auth/me/service`. Caching defeats #43 (forced password reset), #44 (bulk session flush), and #46 (direct phase changes), all of which are expected to take effect *immediately* for downstream services.
 - Modify or extend the access blob fields
 
 Key fields to use:
@@ -141,8 +141,9 @@ Key fields to use:
 | `user_guid` | UUID | Unique user identifier — use as foreign key for all user references |
 | `user_type` | `patient` or `professional` | Top-level role |
 | `is_su_admin` | boolean | Superuser bypass |
-| `effective_phases` | list of strings | Authorized group types (planning, request, provider, analysis) |
-| `groups` | list of objects | Group memberships with `group_guid`, `group_type`, `is_admin` |
+| `must_change_password` | boolean | **#43.** When `true`, the subservice MUST block all protected actions and redirect the user to `${SSO_BASE_URL}/change-password` — see 4.8 below |
+| `effective_phases` | list of strings | Authorized phase names. Sourced **only** from direct `UserPhase` grants (#46 + #57) — group membership does NOT contribute. The field name and check (`phase in effective_phases`) are unchanged; only the source narrowed |
+| `groups` | list of objects | Group memberships with `group_guid`, `group_name`, `category`, `status`, `is_admin`. After #57 these are orthogonal organisational/category metadata — use for org-admin checks or category-based UI grouping, **never** as a phase-access signal. `category` is a free-form string after #60 (was the `group_type` enum before) |
 | `organization_ids` | list of UUIDs | Organisations the user belongs to |
 | `patient_guid` | UUID | Patient record GUID (patient users only) |
 | `professional_guid` | UUID | Professional record GUID (professional users only) |
@@ -193,7 +194,38 @@ The subservice must expose a health endpoint that returns:
 
 This URL is registered in `oath_overview.csv` and may be polled by the SSO admin dashboard.
 
-### 4.7 FHIR R5 Compliance (mandatory if exposing FHIR resources)
+### 4.7 Forced Password Reset Handling (#43, mandatory)
+
+Downstream services must honour the `must_change_password` flag in the access blob:
+
+```python
+if blob.get("must_change_password"):
+    if request.is_json or request.path.startswith("/api/"):
+        # API/FHIR route — return 403 (or a FHIR OperationOutcome) with the change-password URL
+        return jsonify({
+            "error": "password_change_required",
+            "change_password_url": f"{SSO_BASE_URL}/change-password",
+        }), 403
+    # HTML route — redirect
+    return redirect(f"{SSO_BASE_URL}/change-password")
+```
+
+Once the user completes the password change, the flag clears on the next `/me/service` call and the user is unblocked automatically — no subservice-side cleanup needed.
+
+### 4.8 Session-Flush 401 Handling (#44, mandatory)
+
+When an SU flushes a user's sessions, subsequent `/me/service` calls return **401** for JWTs older than the new `token_revocation_epoch`. Treat this 401 as "session terminated":
+
+```python
+resp = requests.get(f"{SSO_BASE_URL}/api/auth/me/service", ...)
+if resp.status_code == 401:
+    session.clear()                          # wipe local session cache
+    return redirect(url_for("auth.login"))   # bounce back through SSO
+```
+
+Do **not** distinguish expired-token, revoked-token, and epoch-flush cases — they all warrant the same "re-login" handling from the subservice's point of view.
+
+### 4.9 FHIR R5 Compliance (mandatory if exposing FHIR resources)
 
 If the subservice manages FHIR resources:
 
@@ -229,7 +261,9 @@ The subservice must handle these SSO failure scenarios:
 | Scenario | SSO Response | Required Action |
 |----------|-------------|-----------------|
 | Token expired | `401` from `/me/service` | Clear session, redirect to SSO login |
-| Token revoked | `401` from `/me/service` | Clear session, redirect to SSO login |
+| Token revoked (`jti` list) | `401` from `/me/service` | Clear session, redirect to SSO login |
+| User session flushed (#44) | `401` from `/me/service` (token `iat` < `token_revocation_epoch`) | Clear session, redirect to SSO login — same handling as expired/revoked |
+| User must change password (#43) | `200` from `/me/service` with `must_change_password: true` | Block protected action; redirect (HTML) or 403 with change-password URL (API/FHIR) to `${SSO_BASE_URL}/change-password` |
 | Invalid service credentials | `403` from `/me/service` | Log error, return HTTP 500 to user, alert ops |
 | SSO unreachable | Connection timeout/error | Return HTTP 503, retry with exponential backoff (max 3 retries) |
 | User lacks required phase | `effective_phases` missing needed phase | Return HTTP 403 with user-friendly message |
@@ -258,6 +292,9 @@ Before a subservice is approved for production, it must pass the following accep
 | F10 | Logout | Logging out clears session; user must re-authenticate to access protected routes |
 | F11 | Token expiry | Expired token triggers redirect to SSO login (not an error page) |
 | F12 | FHIR metadata | `GET /fhir/metadata` returns valid CapabilityStatement (if applicable) |
+| F13 | Forced password reset (#43) | After SU resets the user's password, the service blocks protected actions and routes the user to `${SSO_BASE_URL}/change-password` until the user picks a new password. No subservice-side flag; derived from `/me/service` blob |
+| F14 | Session flush (#44) | After SU flushes the user's sessions, the next protected request returns 401 from `/me/service`; the service wipes local session and redirects to SSO login |
+| F15 | No blob caching | Service calls `/me/service` on every protected request; changing `must_change_password` or `effective_phases` at the SSO takes effect on the very next request without a restart |
 
 ### 7.2 Security Tests
 
@@ -309,6 +346,9 @@ The subservice team and SSO administrator sign off on each item before productio
 - [ ] C.4 GUID-based references used throughout (no integer IDs externally)
 - [ ] C.5 Organisation data sourced from SSO `/api/public/organisations`
 - [ ] C.6 Error handling implemented for all scenarios in Section 6
+- [ ] C.7 `must_change_password` honoured per request (#43)
+- [ ] C.8 `401` from `/me/service` wipes local session and redirects to SSO login (#44)
+- [ ] C.9 Access blob is NOT cached — `/me/service` is called on every protected request
 
 ### Phase D — Acceptance Testing
 

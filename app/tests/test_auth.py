@@ -15,6 +15,7 @@ from src.models.organisation import Organisation
 from src.models.user_organisation import UserOrganisation
 from src.models.group import Group
 from src.models.membership import Membership
+from src.models.user_phase import UserPhase
 
 
 SECRET = 'test-secret-key-not-for-production'
@@ -88,8 +89,9 @@ def seed_data(app):
         uo = UserOrganisation(user_guid=pro_user.guid, organisation_guid=org.guid)
         session.add(uo)
 
-        # Group + membership
-        group = Group(guid=str(uuid.uuid4()), name='Planning A', group_type='planning')
+        # Group + membership. After #57 this no longer implies any phase
+        # access — groups are purely organisational/category metadata.
+        group = Group(guid=str(uuid.uuid4()), name='Planning A', category='planning')
         session.add(group)
         session.flush()
         mem = Membership(
@@ -97,6 +99,11 @@ def seed_data(app):
             group_guid=group.guid, status='approved', is_admin=False,
         )
         session.add(mem)
+
+        # #57: phase access comes only from UserPhase. Grant the pro the
+        # `planning` phase directly so the professional-flow assertions
+        # keep their meaning.
+        session.add(UserPhase(user_guid=pro_user.guid, phase='planning'))
 
         # Patient
         pat_user = User(
@@ -221,8 +228,51 @@ class TestMe:
         assert data['professional_role'] == 'nurse'
         assert seed_data['org_guid'] in data['organization_ids']
         assert len(data['groups']) == 1
-        assert data['groups'][0]['group_type'] == 'planning'
+        assert data['groups'][0]['category'] == 'planning'
+        # #57: effective_phases comes only from UserPhase, not groups.
+        # The seed adds a direct `planning` grant, hence the assertion.
         assert 'planning' in data['effective_phases']
+
+    def test_me_effective_phases_ignores_group_category(self, client, seed_data, app):
+        """#57: a user who is only in a planning-category group but has
+        NO UserPhase row must have an empty `effective_phases`. (Field
+        renamed from `group_type` → `category` in #60.)
+        """
+        # Make a brand new professional with a group membership but no UserPhase.
+        with app.app_context():
+            session = get_session()
+            other = User(
+                guid=str(uuid.uuid4()),
+                email='phaseless@test.com',
+                password_hash=hash_password('phaselesspw1'),
+                user_type='professional',
+                is_su_admin=False,
+            )
+            session.add(other)
+            session.flush()
+            session.add(Professional(
+                guid=str(uuid.uuid4()), user_id=other.id,
+                professional_role='nurse', first_name='Phase', last_name='Less',
+            ))
+            # Reuse the seeded planning-typed group.
+            session.add(Membership(
+                guid=str(uuid.uuid4()), user_guid=other.guid,
+                group_guid=seed_data['group_guid'],
+                status='approved', is_admin=False,
+            ))
+            session.commit()
+            other_guid = other.guid
+            session.close()
+
+        login_resp = _login(client, 'phaseless@test.com', 'phaselesspw1')
+        token = login_resp.get_json()['token']
+        resp = client.get('/api/auth/me', headers=_auth_header(token))
+        data = resp.get_json()
+        assert data['user_guid'] == other_guid
+        assert len(data['groups']) == 1
+        assert data['groups'][0]['category'] == 'planning'
+        # Phase access is orthogonal to group membership (#57).
+        assert data['effective_phases'] == []
 
     def test_me_patient(self, client, seed_data):
         login_resp = _login(client, 'patient@test.com', 'patpass12')

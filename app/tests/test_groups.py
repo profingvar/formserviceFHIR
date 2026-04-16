@@ -57,8 +57,8 @@ def seed_data(app):
         session.flush()
 
         # Group A (planning) and Group B (request)
-        group_a = Group(guid=str(uuid.uuid4()), name='Planning Alpha', group_type='planning')
-        group_b = Group(guid=str(uuid.uuid4()), name='Request Beta', group_type='request')
+        group_a = Group(guid=str(uuid.uuid4()), name='Planning Alpha', category='planning')
+        group_b = Group(guid=str(uuid.uuid4()), name='Request Beta', category='request')
         session.add_all([group_a, group_b])
         session.flush()
 

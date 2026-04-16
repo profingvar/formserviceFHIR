@@ -83,7 +83,7 @@ def seeded_app(app):
         s.add(UserOrganisation(user_guid=pro.guid, organisation_guid=org.guid))
 
         # Group + make pro a group admin
-        grp = Group(name='Test Group', group_type='planning')
+        grp = Group(name='Test Group', category='planning')
         s.add(grp)
         s.flush()
         mem = Membership(user_guid=pro.guid, group_guid=grp.guid,

@@ -48,8 +48,8 @@ def seed_data(app):
         session.add_all([org, org2])
         session.flush()
 
-        group = Group(guid=str(uuid.uuid4()), name='Planning Alpha', group_type='planning')
-        group2 = Group(guid=str(uuid.uuid4()), name='Analysis Beta', group_type='analysis')
+        group = Group(guid=str(uuid.uuid4()), name='Planning Alpha', category='planning')
+        group2 = Group(guid=str(uuid.uuid4()), name='Analysis Beta', category='analysis')
         session.add_all([group, group2])
         session.flush()
 
@@ -126,9 +126,9 @@ class TestPublicGroups:
         assert resp.status_code == 200
         data = resp.get_json()
         assert len(data) == 2
-        types = [g['group_type'] for g in data]
-        assert 'planning' in types
-        assert 'analysis' in types
+        categories = [g['category'] for g in data]
+        assert 'planning' in categories
+        assert 'analysis' in categories
 
     def test_list_groups_has_guids(self, client, seed_data):
         resp = client.get('/api/public/groups')

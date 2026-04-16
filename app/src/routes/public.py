@@ -22,7 +22,39 @@ def list_organisations():
     return jsonify([{
         'organisation_guid': o.guid,
         'name': o.name,
+        'push_endpoint_url': o.push_endpoint_url,
     } for o in orgs]), 200
+
+
+@public_bp.route('/organisations/<org_guid>/members', methods=['GET'])
+@rate_limit(max_requests=60, window_seconds=60)
+def list_organisation_members(org_guid):
+    """GET /api/public/organisations/<guid>/members — professionals in an org."""
+    session = get_db()
+    from src.models.organisation import Organisation
+    from src.models.user_organisation import UserOrganisation
+    from src.models.user import User
+    from src.models.professional import Professional
+
+    org = session.query(Organisation).filter_by(guid=org_guid).first()
+    if org is None:
+        return jsonify({"error": "not_found"}), 404
+
+    links = session.query(UserOrganisation).filter_by(organisation_guid=org_guid).all()
+    members = []
+    for link in links:
+        user = session.query(User).filter_by(guid=link.user_guid).first()
+        if user and user.user_type == 'professional':
+            prof = session.query(Professional).filter_by(user_id=user.id).first()
+            members.append({
+                'user_guid': user.guid,
+                'first_name': prof.first_name if prof else '',
+                'last_name': prof.last_name if prof else '',
+                'professional_role': prof.professional_role if prof else '',
+                'email': user.email,
+            })
+
+    return jsonify(members), 200
 
 
 @public_bp.route('/groups', methods=['GET'])
@@ -36,7 +68,7 @@ def list_groups():
     return jsonify([{
         'group_guid': g.guid,
         'name': g.name,
-        'group_type': g.group_type,
+        'category': g.category,
     } for g in groups]), 200
 
 

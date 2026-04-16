@@ -32,6 +32,114 @@
     {% endif %}
 </div>
 
+<!-- Ticket #47: per-group member roster with orgs + phases. SU-only controls. -->
+{% for mg in member_groups %}
+<div class="card">
+    <h3>{{ mg.group_name }}
+        <span class="badge" style="font-size:0.7rem;background:#e5e7eb;color:#374151;padding:1px 6px;border-radius:4px;margin-left:4px;">{{ mg.category }}</span>
+        <span class="text-muted" style="font-size:0.8rem;font-weight:normal;">— {{ mg.members | length }} member(s)</span>
+    </h3>
+    {% if mg.members %}
+    <div style="overflow-x:auto;">
+    <table>
+        <thead>
+            <tr>
+                <th>Email</th>
+                <th>Organisations</th>
+                <th>Phases</th>
+                <th>Role</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for m in mg.members %}
+            <tr>
+                <td>{{ m.email }}{% if m.is_group_admin %} <span class="badge" style="background:#fef3c7;color:#92400e;font-size:0.7rem;padding:1px 4px;border-radius:4px;">admin</span>{% endif %}</td>
+                <td>
+                    {% for ol in m.org_labels %}
+                        <span style="display:inline-flex;align-items:center;gap:2px;background:var(--badge-bg,#e5e7eb);border-radius:4px;padding:1px 6px;font-size:0.75rem;margin:1px 0;">
+                            {{ ol.name }}
+                            {% if current_user.is_su_admin %}
+                            <form method="post" action="/group-admin/remove-org" style="display:inline;margin:0;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="user_guid" value="{{ m.user_guid }}">
+                                <input type="hidden" name="organisation_guid" value="{{ ol.guid }}">
+                                <button type="submit" style="background:none;border:none;color:var(--danger,#c00);cursor:pointer;font-size:0.8rem;padding:0 2px;line-height:1;" title="Remove">&times;</button>
+                            </form>
+                            {% endif %}
+                        </span>
+                    {% endfor %}
+                    {% if not m.org_labels %}
+                        <span style="color:var(--danger,#c00);font-size:0.75rem;font-weight:600;">No org</span>
+                    {% endif %}
+                    {% if current_user.is_su_admin %}
+                    <form method="post" action="/group-admin/assign-org" style="display:inline-flex;gap:2px;align-items:center;margin-top:2px;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="user_guid" value="{{ m.user_guid }}">
+                        <select name="organisation_guid" style="font-size:0.7rem;padding:1px 4px;max-width:120px;" required>
+                            <option value="">+ Org</option>
+                            {% for o in all_organisations %}
+                                {% if o.organisation_guid not in m.organization_ids %}
+                                <option value="{{ o.organisation_guid }}">{{ o.name }}</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-sm btn-secondary" style="padding:1px 6px;font-size:0.7rem;">Add</button>
+                    </form>
+                    {% endif %}
+                </td>
+                <td>
+                    {% for p in m.direct_phases %}
+                        <span style="display:inline-flex;align-items:center;gap:2px;background:#d1fae5;color:#065f46;border-radius:4px;padding:1px 6px;font-size:0.75rem;margin:1px 0;" title="Direct grant">
+                            {{ p }}
+                            {% if current_user.is_su_admin %}
+                            <form method="post" action="/group-admin/revoke-phase" style="display:inline;margin:0;"
+                                  onsubmit="return confirm('Revoke direct phase &quot;{{ p }}&quot; from {{ m.email }}? Group-derived access remains.');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="user_guid" value="{{ m.user_guid }}">
+                                <input type="hidden" name="phase" value="{{ p }}">
+                                <button type="submit" style="background:none;border:none;color:var(--danger,#c00);cursor:pointer;font-size:0.8rem;padding:0 2px;line-height:1;" title="Revoke direct">&times;</button>
+                            </form>
+                            {% endif %}
+                        </span>
+                    {% endfor %}
+                    {% for gp in m.group_phases %}
+                        <span style="display:inline-block;background:#e0e7ff;color:#3730a3;border-radius:4px;padding:1px 6px;font-size:0.75rem;margin:1px 0;" title="Via group: {{ gp.group_name }}">
+                            {{ gp.phase }} <em style="font-size:0.65rem;opacity:0.7;">(grp)</em>
+                        </span>
+                    {% endfor %}
+                    {% if not m.direct_phases and not m.group_phases %}
+                        <span style="color:var(--muted,#6b7280);font-size:0.75rem;">—</span>
+                    {% endif %}
+                    {% if current_user.is_su_admin %}
+                    <form method="post" action="/group-admin/grant-phase" style="display:inline-flex;gap:2px;align-items:center;margin-top:2px;">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="user_guid" value="{{ m.user_guid }}">
+                        <select name="phase" style="font-size:0.7rem;padding:1px 4px;" required>
+                            <option value="">+ Phase</option>
+                            {% for pn in phase_names %}
+                                {% if pn not in m.direct_phases %}
+                                <option value="{{ pn }}">{{ pn }}</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-sm btn-secondary" style="padding:1px 6px;font-size:0.7rem;">Grant</button>
+                    </form>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if m.is_group_admin %}Group admin{% else %}Member{% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="text-muted">No approved members yet.</p>
+    {% endif %}
+</div>
+{% endfor %}
+
 <!-- Generate Invite -->
 <div class="card">
     <h3>Generate Invite Link</h3>

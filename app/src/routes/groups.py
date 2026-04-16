@@ -34,7 +34,7 @@ def list_groups():
                 'resourceType': Group.FHIR_RESOURCE_TYPE,
                 'group_guid': group.guid,
                 'name': group.name,
-                'group_type': group.group_type,
+                'category': group.category,
                 'is_admin': m.is_admin,
                 'membership_status': m.status,
             })

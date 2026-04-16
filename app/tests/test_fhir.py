@@ -74,7 +74,7 @@ def _seed_data(app):
                           organisation_guid=org.guid)
         s.add(patient)
 
-        grp = Group(name='FHIR Test Group', group_type='planning')
+        grp = Group(name='FHIR Test Group', category='planning')
         s.add(grp)
 
         s.commit()
@@ -93,7 +93,7 @@ def _seed_data(app):
             'pat_guid': patient.guid, 'pat_personnummer': patient.personnummer,
             'pat_org_guid': patient.organisation_guid,
             'grp_guid': grp.guid, 'grp_name': grp.name,
-            'grp_type': grp.group_type,
+            'grp_category': grp.category,
             'pro_email': pro_user.email, 'pat_email': pat_user.email,
         }
         s.close()

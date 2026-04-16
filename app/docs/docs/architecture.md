@@ -41,6 +41,7 @@ All tables use integer primary keys internally and UUID4 GUIDs for external refe
 erDiagram
     User ||--o| Patient : "has"
     User ||--o| Professional : "has"
+    User ||--o{ UserPhase : "direct phase grants"
     User }o--o{ Organisation : "UserOrganisation"
     User }o--o{ Group : "Membership"
     Group ||--o{ Membership : "has"
@@ -56,7 +57,18 @@ erDiagram
         string password_hash
         enum user_type "patient|professional"
         bool is_su_admin
+        bool force_change_on_next_login "#43"
+        datetime token_revocation_epoch "#44 nullable"
         datetime created_at
+    }
+
+    UserPhase {
+        int id PK
+        uuid guid UK
+        uuid user_guid FK "#46 direct phase grant"
+        enum phase "planning|request|provider|analysis"
+        uuid granted_by_guid
+        datetime granted_at
     }
 
     Patient {
@@ -95,7 +107,7 @@ erDiagram
         int id PK
         uuid guid UK
         string name
-        enum group_type "planning|request|provider|analysis"
+        string category "free-form category label (#60) — does NOT confer phase access after #57"
         datetime created_at
     }
 
@@ -114,7 +126,7 @@ erDiagram
         int id PK
         uuid guid UK
         string proposed_name
-        enum group_type
+        string category
         uuid requested_by_guid FK
         enum status "pending|approved|rejected"
         uuid decided_by_guid
@@ -220,6 +232,53 @@ sequenceDiagram
 - Auto-redirect skips login form if user has valid session
 - Service-to-service calls require `X-SSO-Client-Id` and `X-SSO-Client-Secret` headers
 
+### Forced Password Reset (#43)
+
+```mermaid
+sequenceDiagram
+    participant SU as SU Admin
+    participant SSO as SSO Service
+    participant DS as Downstream Service
+    participant U as User Browser
+
+    SU->>SSO: POST /api/admin/users/<guid>/reset-password
+    SSO->>SSO: user.force_change_on_next_login = True
+    SSO-->>SU: 200 OK (+ temp password)
+
+    U->>DS: GET /protected (existing Bearer)
+    DS->>SSO: GET /api/auth/me/service
+    SSO-->>DS: blob { must_change_password: true, ... }
+    DS->>U: 302/403 → SSO /change-password
+
+    U->>SSO: POST /api/auth/change-password (new pw)
+    SSO->>SSO: user.force_change_on_next_login = False
+    SSO-->>U: 200 OK
+    Note over U,DS: Next /me/service call returns must_change_password=false → user unblocked
+```
+
+### Bulk Session Flush (#44)
+
+```mermaid
+sequenceDiagram
+    participant SU as SU Admin
+    participant SSO as SSO Service
+    participant DS as Downstream Service
+    participant U as User Browser
+
+    SU->>SSO: POST /api/admin/users/<guid>/flush-sessions
+    SSO->>SSO: user.token_revocation_epoch = now()
+    SSO-->>SU: 200 OK
+
+    U->>DS: GET /protected (existing Bearer, iat < epoch)
+    DS->>SSO: GET /api/auth/me/service
+    SSO->>SSO: token_iat_dt < user.token_revocation_epoch → 401
+    SSO-->>DS: 401 Unauthorized
+    DS->>DS: Clear local session
+    DS->>U: Redirect to SSO /login
+```
+
+Cheaper than inserting N revoked-token rows when the set of active `jti`s is unknown (e.g. after a credential compromise across multiple devices).
+
 ## Access Blob Schema
 
 The access blob is the core data structure returned by `/api/auth/me`. Downstream services use it to make authorization decisions.
@@ -232,6 +291,7 @@ The access blob is the core data structure returned by `/api/auth/me`. Downstrea
   "email": "patient@example.com",
   "user_type": "patient",
   "is_su_admin": false,
+  "must_change_password": false,
   "patient_guid": "e5f6g7h8-...",
   "organisation_guid": "i9j0k1l2-...",
   "in_registry": true,
@@ -248,6 +308,7 @@ The access blob is the core data structure returned by `/api/auth/me`. Downstrea
   "email": "doctor@hospital.se",
   "user_type": "professional",
   "is_su_admin": false,
+  "must_change_password": false,
   "professional_guid": "q7r8s9t0-...",
   "professional_role": "doctor",
   "fhir_resource_type": "Practitioner",
@@ -256,14 +317,20 @@ The access blob is the core data structure returned by `/api/auth/me`. Downstrea
     {
       "group_guid": "u1v2w3x4-...",
       "group_name": "Oncology Planning",
-      "group_type": "planning",
+      "category": "planning",
       "status": "approved",
       "is_admin": false
     }
   ],
-  "effective_phases": ["planning"]
+  "effective_phases": ["planning", "analysis"]
 }
 ```
+
+`effective_phases` is sourced **exclusively** from direct `UserPhase` grants (#46 + #57), populated by SU via `POST /api/admin/users/<guid>/phases`.
+
+**Groups and phases are orthogonal access criteria (#57).** `Group.category` (renamed from `group_type` in #60) is a free-form organisational label — approved membership in a group with `category = "planning"` does **not** confer the `planning` phase. Each downstream service composes its own access policy from independent inputs (membership, phase, org scope); the SSO merely supplies the raw facts.
+
+Downstream services should continue to check `phase in blob["effective_phases"]` — the field name and shape are unchanged; only the source of truth narrowed.
 
 ## Decision Tree
 
@@ -310,7 +377,7 @@ Each request passes through these layers in order:
 1. **CORS** — validates `Origin` header against `ALLOWED_ORIGINS`
 2. **Rate Limiter** — in-memory per-IP limits (configurable per endpoint)
 3. **CSRF** — Flask-WTF token validation on form POST (API routes exempt)
-4. **Auth Middleware** — JWT decode, revocation check, user loading into `g.current_user`
+4. **Auth Middleware** — JWT decode, `jti` revocation check, `iat < user.token_revocation_epoch` check (#44), user loading into `g.current_user`
 5. **Route Handler** — blueprint endpoint logic
 6. **Audit Logger** — structured log entry for sensitive operations
 

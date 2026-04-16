@@ -317,7 +317,7 @@ class TestGroupAdminPage:
         # Make user admin of a group
         with app.app_context():
             s = get_session()
-            grp = Group(name='Test Group', group_type='planning')
+            grp = Group(name='Test Group', category='planning')
             s.add(grp)
             s.flush()
             mem = Membership(user_guid=guid, group_guid=grp.guid,
@@ -389,7 +389,7 @@ class TestOnboardingPages:
         _login_session(client, app, token)
 
         resp = client.post('/suggest-group', data={
-            'proposed_name': 'New Research', 'group_type': 'analysis',
+            'proposed_name': 'New Research', 'category': 'analysis',
         }, follow_redirects=False)
         assert resp.status_code == 302
         assert '/dashboard' in resp.headers['Location']

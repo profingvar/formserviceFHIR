@@ -23,7 +23,7 @@
 
     {% if current_user.user_type == 'professional' %}
     <div class="card">
-        <h3>Organisations</h3>
+        <h3>Assigned Organisations</h3>
         {% if org_names %}
             <ul>
             {% for name in org_names %}
@@ -43,13 +43,13 @@
     {% if groups %}
         <table>
             <thead>
-                <tr><th>Group</th><th>Type</th><th>Status</th><th>Admin</th></tr>
+                <tr><th>Group</th><th>Category</th><th>Status</th><th>Admin</th></tr>
             </thead>
             <tbody>
             {% for g in groups %}
                 <tr>
                     <td>{{ g.group_name }}</td>
-                    <td>{{ g.group_type }}</td>
+                    <td>{{ g.category }}</td>
                     <td><span class="badge badge-{{ g.status }}">{{ g.status }}</span></td>
                     <td>{% if g.is_admin %}<span class="badge badge-admin">Admin</span>{% endif %}</td>
                 </tr>

@@ -76,9 +76,9 @@ def group_to_fhir(group):
         "code": {
             "coding": [
                 {
-                    "system": "urn:pdhc:group-type",
-                    "code": group.group_type,
-                    "display": group.group_type.title(),
+                    "system": "urn:pdhc:group-category",
+                    "code": group.category,
+                    "display": group.category.title(),
                 }
             ]
         },
