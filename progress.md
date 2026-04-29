@@ -307,3 +307,51 @@ because nothing in prod set those env pairs).
    `src/config.py` + the unused frontend routes that fed the old UI) —
    deferred. Operator should grep prod env on miserver for any
    `KEYAUTH_SERVICE_*=` first; if nothing, safe to remove.
+
+## 2026-04-29 — Ticket #96 closed: external_partner folded into organisations
+
+The morning's External Partners deploy created a separate
+`external_partner` table. Per ticket #96 (raised by the operator
+mid-afternoon: *"Externa organisations should be 'organisations'!
+Otherwise they fall out of contract"*) this broke FHIR Contract
+referencing — `Contract.signer.party.reference` is meant to point at
+Organisation, not at a custom Partner type.
+
+Refactor landed and deployed:
+
+- `organisations` extended with `is_external` bool + 18 partner-
+  specific columns (auth_kind, allowed_scopes, allowed_services,
+  client_secret_hash, api_key_hash, status, expires_at,
+  last_rotated_at, revoked_at, revoke_reason, country_code,
+  org_number, description, contact_name/email/phone, updated_at,
+  created_by_user_guid).
+- `organisation_audit` (one table) replaces the per-population
+  `external_partner_audit`.
+- `external_partner` and `external_partner_audit` dropped — no
+  production rows lost; only the smoke-test row from the morning's
+  deploy was discarded.
+- FHIR Contract reference convention now `Organisation/<guid>`
+  uniformly. The previous `https://sso.pdhc.se/Partner/<guid>` shape
+  is retired.
+- API surface kept: `/api/admin/partners/*` endpoints still work,
+  filter `Organisation by is_external=true`. JSON responses carry
+  both `partner_guid` (legacy alias) and `guid` (canonical) so the
+  SU admin page JS continues to work without rewrite.
+
+**Ticket #96 closed** via POST /api/tickets/96/respond at 16:35 with
+the full resolution text; status now `completed`.
+
+**Test results — `pytest`:**
+
+- `tests/test_partners.py` — 22 / 22 passed.
+- `tests/test_models.py` — passes (EXPECTED_TABLES updated:
+  `external_partner*` removed, `organisation_audit` added).
+- Whole repo suite — 253 / 253 passed.
+
+**Migration on miserver** (idempotent SQL applied via colima ssh →
+docker exec sso_db psql): organisations got the new columns + FK,
+organisation_audit created, obsolete tables dropped. gunicorn
+restarted via /tmp/sso_restart.sh; /api/health 200 with
+`database: connected`.
+
+Pushed to `profingvar/formserviceFHIR` as commit `5065ccb`.
